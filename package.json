@@ -1,6 +1,6 @@
 {
   "name": "audio-feedback",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Inspreekbare feedback voor webapplicaties: een widget die audio opneemt en met de bekeken URL naar onze server stuurt",
@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test 'tests/**/*.test.ts'",
     "test:e2e": "npm run build && playwright test",
-    "check": "npm run typecheck && npm test && npm run test:e2e"
+    "check": "npm run typecheck && npm test && npm run test:e2e",
+    "release": "node scripts/release.ts"
   },
   "devDependencies": {
     "@fontsource-variable/montserrat": "^5.3.0",

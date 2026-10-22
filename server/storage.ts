@@ -18,6 +18,7 @@ const ID = /^[0-9a-f-]{36}$/;
 
 export class Storage {
   readonly dir: string;
+  private used = 0;
 
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'recordings');
@@ -25,19 +26,28 @@ export class Storage {
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
+    this.used = (await this.list()).reduce((sum, r) => sum + r.sizeBytes, 0);
+  }
+
+  /** Audio van alle opnames samen, voor de bovengrens op de opslag. */
+  get usedBytes(): number {
+    return this.used;
   }
 
   async exists(id: string): Promise<boolean> {
     return stat(join(this.dir, `${id}.json`)).then(() => true, () => false);
   }
 
-  async save(record: StoredRecording, audio: Uint8Array): Promise<void> {
+  /** Een Blob gaat als stream naar schijf, zonder er eerst nog een kopie van in het geheugen te maken. */
+  async save(record: StoredRecording, audio: Blob | Uint8Array): Promise<void> {
     const audioPath = join(this.dir, record.audioFile);
     const metaPath = join(this.dir, `${record.id}.json`);
-    await writeFile(`${audioPath}.tmp`, audio);
+    const previous = await this.get(record.id);
+    await writeFile(`${audioPath}.tmp`, audio instanceof Blob ? audio.stream() : audio);
     await rename(`${audioPath}.tmp`, audioPath);
     await writeFile(`${metaPath}.tmp`, JSON.stringify(record, null, 2));
     await rename(`${metaPath}.tmp`, metaPath);
+    this.used += record.sizeBytes - (previous?.sizeBytes ?? 0);
   }
 
   async get(id: string): Promise<StoredRecording | null> {
@@ -67,6 +77,7 @@ export class Storage {
     if (!record) return false;
     await rm(join(this.dir, `${id}.json`), { force: true });
     await rm(join(this.dir, record.audioFile), { force: true });
+    this.used -= record.sizeBytes;
     return true;
   }
 

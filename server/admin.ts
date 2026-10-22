@@ -42,7 +42,7 @@ function renderRecording(r: StoredRecording): string {
   return `<article class="rec" id="r-${r.id}">
     <header>
       <strong>${escape(r.project)}</strong>
-      <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB</span>
+      <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
       ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
       <span class="spacer"></span>
       <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}">download</a>
@@ -97,6 +97,8 @@ export function renderAdmin(all: StoredRecording[], project: string): string {
   .delete { border: 0; background: #f6f8fa; color: #d0021b; border-radius: 999px; padding: 4px 12px; }
   .delete:hover { background: #d0021b; color: #fff; }
   .empty { margin-top: 24px; color: #77818b; }
+  .code { font-family: ui-monospace, monospace; color: #3c3c3c; }
+  .note { font-size: 12px; color: #77818b; margin: 8px 0 0; }
 </style>
 <script src="/admin.js" defer></script>
 </head>
@@ -104,6 +106,8 @@ export function renderAdmin(all: StoredRecording[], project: string): string {
 <header class="bar"><div>Ingesproken feedback</div></header>
 <main>
   <nav>${filters}</nav>
+  <p class="note">Adressen, titels en context komen van de browser van wie insprak en zijn niet gecontroleerd. Klik alleen op links die je vertrouwt.
+    Vraagt iemand om zijn opname, zoek dan op het kenmerk dat de widget na het versturen liet zien (Ctrl+F).</p>
   ${shown.length ? shown.map(renderRecording).join('') : '<p class="empty">Nog geen opnames.</p>'}
 </main>
 </body>

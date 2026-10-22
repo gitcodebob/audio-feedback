@@ -8,6 +8,8 @@ import type { TimelineEntry } from './types.ts';
 export interface UrlOptions {
   stripQuery: boolean;
   stripHash: boolean;
+  /** Queryparameters die ook met stripQuery blijven staan, zoals een tab of een modus. */
+  keepParams: string[];
 }
 
 const MAX_URL_LENGTH = 2048;
@@ -17,11 +19,16 @@ export function cleanUrl(href: string, opts: UrlOptions): string {
   let out = href;
   try {
     const u = new URL(href);
-    if (opts.stripQuery) u.search = '';
+    if (opts.stripQuery) {
+      const kept = new URLSearchParams();
+      for (const [k, v] of u.searchParams) if (opts.keepParams.includes(k)) kept.append(k, v);
+      u.search = kept.toString();
+    }
     if (opts.stripHash) u.hash = '';
     out = u.toString();
   } catch {
-    // Geen geldige URL: neem hem zoals hij is.
+    // Geen geldige URL: dan weten we ook niet wat er weg moet, dus niets meesturen.
+    return '';
   }
   return out.length > MAX_URL_LENGTH ? out.slice(0, MAX_URL_LENGTH) + '…' : out;
 }

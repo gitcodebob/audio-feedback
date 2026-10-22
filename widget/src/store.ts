@@ -97,4 +97,14 @@ export class SessionStore {
     tx.objectStore('chunks').delete(IDBKeyRange.bound([sessionId, 0], [sessionId, Number.MAX_SAFE_INTEGER]));
     await done(tx);
   }
+
+  /** Alles weg, van elk project op deze origin. */
+  async clear(): Promise<void> {
+    const db = await this.db;
+    if (!db) return;
+    const tx = db.transaction(['sessions', 'chunks'], 'readwrite');
+    tx.objectStore('sessions').clear();
+    tx.objectStore('chunks').clear();
+    await done(tx);
+  }
 }

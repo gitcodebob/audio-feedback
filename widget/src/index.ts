@@ -6,6 +6,7 @@
 // als die vóór het script staat. Met data-manual start er niets vanzelf en roept de
 // app zelf AudioFeedback.init({...}) aan.
 
+import { SessionStore } from './store.ts';
 import { FeedbackWidget, VERSION, type Corner, type WidgetConfig } from './widget.ts';
 
 interface InitOptions extends Partial<WidgetConfig> {
@@ -21,6 +22,8 @@ interface AudioFeedbackApi {
   open(): void;
   minimize(): void;
   setContext(values: Record<string, string>): void;
+  /** Gooit alle opnames weg die nog in deze browser staan, ook een lopende. Roep dit aan bij uitloggen. */
+  clear(): Promise<void>;
   destroy(): void;
 }
 
@@ -52,6 +55,8 @@ function fromScriptTag(): InitOptions {
   if (d.maxDuration) out.maxDurationSec = Number(d.maxDuration);
   if (d.stripQuery !== undefined) out.stripQuery = flag(d.stripQuery);
   if (d.stripHash !== undefined) out.stripHash = flag(d.stripHash);
+  if (d.keepParams) out.keepParams = d.keepParams.split(',').map((p) => p.trim()).filter(Boolean);
+  if (d.privacyUrl) out.privacyUrl = d.privacyUrl;
   if (d.minimized !== undefined) out.startMinimized = flag(d.minimized);
   if (d.allowWebdriver !== undefined) out.allowWebdriver = flag(d.allowWebdriver);
   if (d.hosts) out.hosts = d.hosts.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
@@ -74,6 +79,18 @@ function defaultEndpoint(): string {
   return location.origin;
 }
 
+function httpUrl(value: string | undefined): string {
+  if (!value) return '';
+  try {
+    const u = new URL(value, location.href);
+    if (u.protocol === 'https:' || u.protocol === 'http:') return u.href;
+  } catch {
+    // Valt door naar leeg.
+  }
+  console.warn('[audio-feedback] data-privacy-url is geen http(s)-adres en wordt genegeerd');
+  return '';
+}
+
 function resolveConfig(options: InitOptions): WidgetConfig {
   const max = Number(options.maxDurationSec);
   const context: Record<string, string> = {};
@@ -83,8 +100,11 @@ function resolveConfig(options: InitOptions): WidgetConfig {
     project: options.project || location.hostname || 'onbekend',
     position: options.position ?? 'bottom-right',
     maxDurationSec: Number.isFinite(max) && max > 0 ? Math.min(max, MAX_DURATION_CAP_SEC) : 10 * 60,
-    stripQuery: options.stripQuery ?? false,
-    stripHash: options.stripHash ?? false,
+    // Standaard alleen het pad: in query en hash staan vaak tokens, zoektermen of ids.
+    stripQuery: options.stripQuery ?? true,
+    stripHash: options.stripHash ?? true,
+    keepParams: (options.keepParams ?? []).map(String),
+    privacyUrl: httpUrl(options.privacyUrl),
     startMinimized: options.startMinimized ?? false,
     context,
   };
@@ -117,6 +137,8 @@ if (!window.AudioFeedback) {
       Object.assign(pendingContext, values);
       instance?.setContext(values);
     },
+    // Ook zonder kaartje (andere host, nog niet gestart): de opslag is van de origin, niet van de widget.
+    clear: () => (instance ? instance.clear() : new SessionStore().clear().catch(() => {})),
     destroy: () => {
       instance?.destroy();
       instance = null;

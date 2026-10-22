@@ -15,8 +15,13 @@ function extensionFor(mimeType: string): string {
   return 'webm';
 }
 
+export interface UploadReceipt {
+  /** Hoe lang de server de opname bewaart; 0 als hij niets weggooit, undefined bij een oude server. */
+  retentionDays?: number;
+}
+
 /** Een multipart POST zonder eigen headers is een "simple request": geen CORS-preflight nodig. */
-export async function upload(endpoint: string, meta: RecordingMeta, audio: Blob): Promise<void> {
+export async function upload(endpoint: string, meta: RecordingMeta, audio: Blob): Promise<UploadReceipt> {
   const body = new FormData();
   body.append('meta', JSON.stringify(meta));
   body.append('audio', audio, `${meta.id}.${extensionFor(meta.mimeType)}`);
@@ -33,7 +38,10 @@ export async function upload(endpoint: string, meta: RecordingMeta, audio: Blob)
   } catch {
     throw new UploadError('Versturen lukte niet. Controleer je verbinding en probeer het opnieuw.', true);
   }
-  if (res.ok) return;
+  if (res.ok) {
+    const body = await res.json().catch(() => ({})) as { retentionDays?: unknown };
+    return typeof body.retentionDays === 'number' ? { retentionDays: body.retentionDays } : {};
+  }
   if (res.status === 413) throw new UploadError('De opname is te groot om te versturen.', false);
   if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
     const detail = await res.json().then((j: { error?: string }) => j.error, () => undefined);
