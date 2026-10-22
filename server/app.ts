@@ -30,7 +30,7 @@ export interface AppConfig {
   allowedOrigins: string[];
   adminPassword: string;
   maxUploadBytes: number;
-  /** Bovengrens voor alle opnames samen op schijf. 0 is geen grens. */
+  /** Bovengrens voor alle opnames samen op schijf; daarboven gaan de oudste weg. 0 is geen grens. */
   maxStorageBytes: number;
   /** Uploads die tegelijk binnen mogen komen; elke upload staat even in het geheugen. */
   maxConcurrentUploads: number;
@@ -244,9 +244,8 @@ export function createApp(config: AppConfig) {
 
     const reply = { id: meta.id, retentionDays: config.retentionDays };
     if (await storage.exists(meta.id)) return json(res, 200, { ...reply, duplicate: true });
-    if (config.maxStorageBytes > 0 && storage.usedBytes + audio.size > config.maxStorageBytes) {
-      console.warn(`[upload] opslag vol (${Math.round(storage.usedBytes / 1024 / 1024)} MB), ${meta.project} geweigerd`);
-      throw new HttpError(507, 'de opslag is vol, probeer het later opnieuw');
+    if (config.maxStorageBytes > 0 && audio.size > config.maxStorageBytes) {
+      throw new HttpError(507, 'de opname is groter dan de hele opslag');
     }
     const { ext, contentType: audioType } = AUDIO_TYPES[sniffed]!;
     const record: StoredRecording = {
@@ -257,7 +256,8 @@ export function createApp(config: AppConfig) {
       audioType,
       sizeBytes: audio.size,
     };
-    await storage.save(record, audio);
+    const evicted = await storage.saveWithin(record, audio, config.maxStorageBytes);
+    if (evicted) console.log(`[quota] opslag vol: ${evicted} oudste opname(s) verwijderd voor nieuwe feedback`);
     // Zonder URL: daar kunnen persoonsgegevens in staan, en de logs vallen buiten de bewaartermijn.
     console.log(`[upload] ${record.project} ${record.id} ${Math.round(record.durationMs / 1000)}s`);
     json(res, 201, reply);
