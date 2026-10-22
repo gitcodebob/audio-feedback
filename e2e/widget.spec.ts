@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // Een nep-hostapp op http://localhost:<poort+1>/host/... sluit de widget in van de
 // feedbackserver op 127.0.0.1:<poort>. De fake-device-vlaggen van Chromium leveren
@@ -25,7 +27,7 @@ interface Recording {
   timeline: { at: number; type: string; url?: string }[];
 }
 
-function hostPage(attrs = ''): string {
+function hostPage(attrs = '', src = `${SERVER}/widget.js`): string {
   return `<!doctype html><html lang="nl"><head><title>Host-app</title></head><body>
     <h1>Host-app</h1>
     <button id="spa">Naar instellingen</button>
@@ -36,17 +38,18 @@ function hostPage(attrs = ''): string {
       document.addEventListener('click', () => window.appClicks++);
       document.getElementById('spa').onclick = () => history.pushState({}, '', '/host/instellingen?tab=profiel');
     </script>
-    <script src="${SERVER}/widget.js" data-project="e2e" ${attrs.includes('data-allow-webdriver') ? '' : 'data-allow-webdriver'} data-context='{"omgeving":"test"}' ${attrs} defer></script>
+    <script src="${src}" data-project="e2e" ${attrs.includes('data-allow-webdriver') ? '' : 'data-allow-webdriver'} data-context='{"omgeving":"test"}' ${attrs} defer></script>
   </body></html>`;
 }
 
 let hostAttrs = '';
+let hostSrc: string | undefined;
 let hostServer: Server;
 
 test.beforeAll(async () => {
   hostServer = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(hostPage(hostAttrs));
+    res.end(hostPage(hostAttrs, hostSrc));
   });
   await new Promise<void>((resolve) => hostServer.listen(HOST_PORT, '127.0.0.1', resolve));
 });
@@ -55,8 +58,9 @@ test.afterAll(() => {
   hostServer.close();
 });
 
-function serveHost(attrs = ''): void {
+function serveHost(attrs = '', src?: string): void {
   hostAttrs = attrs;
+  hostSrc = src;
 }
 
 async function recordings(page: Page, project = 'e2e'): Promise<Recording[]> {
@@ -78,7 +82,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('opnemen, pauzeren, hervatten en versturen legt de pagina’s vast', async ({ page }) => {
-  serveHost();
+  // Query en hash gaan alleen mee als de app dat aanzet.
+  serveHost('data-keep-params="tab" data-strip-hash="false"');
   await page.goto('/host/start');
   await expect(widget(page).getByText('Vertel wat je ziet of ervaart')).toBeVisible();
 
@@ -112,12 +117,16 @@ test('opnemen, pauzeren, hervatten en versturen legt de pagina’s vast', async 
   expect(rec!.sizeBytes).toBeGreaterThan(1000);
   expect(rec!.context).toEqual({ omgeving: 'test' });
   expect(rec!.recovered).toBe(false);
-  // Pauze telt niet mee: ~1,5 + ~2,6 s opname, niet de seconde pauze erbij.
+  // ~1,5 + ~2,6 s opname. De bovengrens is ruim: op een drukke machine duren de klikken langer.
   expect(rec!.durationMs).toBeGreaterThan(3000);
-  expect(rec!.durationMs).toBeLessThan(5500);
+  expect(rec!.durationMs).toBeLessThan(8000);
 
   const types = rec!.timeline.map((e) => e.type);
   expect(types).toEqual(['start', 'pause', 'resume', 'navigate', 'navigate', 'stop']);
+  // De pauze telt niet mee: hervatten ligt op hetzelfde punt in de opname als pauzeren,
+  // terwijl er een seconde tussen zat.
+  const [, pause, resume] = rec!.timeline;
+  expect(resume!.at - pause!.at).toBeLessThan(150);
   const urls = rec!.timeline.filter((e) => e.type === 'navigate').map((e) => e.url);
   expect(urls).toEqual([
     `http://localhost:${HOST_PORT}/host/instellingen?tab=profiel`,
@@ -127,6 +136,86 @@ test('opnemen, pauzeren, hervatten en versturen legt de pagina’s vast', async 
   // De opgeslagen audio is af te spelen.
   const audio = await page.request.get(`${SERVER}/api/recordings/${rec!.id}/audio`, { headers: AUTH });
   expect(audio.status()).toBe(200);
+});
+
+test('standaard gaan query en hash niet mee; het bedankje noemt kenmerk en bewaartermijn', async ({ page }) => {
+  serveHost('data-privacy-url="https://example.nl/privacy"');
+  await page.goto('/host/start?zoek=jan%40example.nl#access_token=abc');
+  const privacy = widget(page).getByRole('link', { name: 'Hoe we hiermee omgaan' });
+  await expect(privacy).toHaveAttribute('href', 'https://example.nl/privacy');
+  await expect(privacy).toHaveAttribute('target', '_blank');
+
+  await button(page, 'Opnemen').click();
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+  await page.evaluate(() => history.pushState({}, '', '/host/herstel?token=geheim#code=xyz'));
+  await page.waitForTimeout(1300);
+  await button(page, 'Stoppen').click();
+  await expect(widget(page).getByRole('list', { name: /Pagina/ })).not.toContainText('geheim');
+  await button(page, 'Versturen').click();
+
+  const [rec] = await recordings(page);
+  expect(rec!.url).toBe(`http://localhost:${HOST_PORT}/host/start`);
+  expect(rec!.timeline.filter((e) => e.url).map((e) => e.url)).toEqual([
+    `http://localhost:${HOST_PORT}/host/start`,
+    `http://localhost:${HOST_PORT}/host/herstel`,
+  ]);
+  await expect(widget(page).getByText('Bedankt! Je feedback is verstuurd.')).toBeVisible();
+  await expect(widget(page).getByText(`Kenmerk ${rec!.id.slice(0, 8)}`)).toBeVisible();
+  await expect(widget(page).getByText('We bewaren hem 90 dagen.')).toBeVisible();
+});
+
+test('AudioFeedback.clear() gooit een klaarstaande opname weg', async ({ page }) => {
+  serveHost();
+  await page.goto('/host/start');
+  await button(page, 'Opnemen').click();
+  await page.waitForTimeout(1500);
+  await button(page, 'Stoppen').click();
+  await button(page, 'Versturen').waitFor();
+
+  // Bijvoorbeeld bij uitloggen.
+  await page.evaluate(() => (window as unknown as { AudioFeedback: { clear(): Promise<void> } }).AudioFeedback.clear());
+  await expect(button(page, 'Opnemen')).toBeVisible();
+  await page.reload();
+  await page.waitForTimeout(3500);
+  await expect(widget(page).getByText('Er staat nog een opname klaar')).toHaveCount(0);
+  expect(await recordings(page)).toEqual([]);
+});
+
+test('een opname die niet verstuurd is, verdwijnt na een dag uit de browser', async ({ page }) => {
+  serveHost();
+  await page.goto('/host/start');
+  await button(page, 'Opnemen').click();
+  await page.waitForTimeout(1500);
+  await button(page, 'Stoppen').click();
+  await button(page, 'Versturen').waitFor();
+
+  // Een dag en een uur later, op dezelfde computer.
+  await page.addInitScript(() => {
+    const now = Date.now.bind(Date);
+    Date.now = () => now() + 25 * 60 * 60 * 1000;
+  });
+  await page.reload();
+  await page.waitForTimeout(3500);
+  await expect(widget(page).getByText('Er staat nog een opname klaar')).toHaveCount(0);
+  await expect(button(page, 'Opnemen')).toBeVisible();
+});
+
+test('een vaste release laadt met integrity, en een gewijzigd bestand niet', async ({ page }) => {
+  const releases = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'releases', 'integrity.json'), 'utf8')) as Record<string, string>;
+  const [version, integrity] = Object.entries(releases).at(-1)!;
+  serveHost(`integrity="${integrity}" crossorigin="anonymous"`, `${SERVER}/widget-${version}.js`);
+  await page.goto('/host/start');
+  await expect(button(page, 'Opnemen')).toBeVisible();
+
+  // Zo ziet de browser een bestand dat iemand op de server heeft aangepast.
+  const blocked: string[] = [];
+  page.on('console', (m) => m.type() === 'error' && blocked.push(m.text()));
+  serveHost(`integrity="sha384-${'A'.repeat(64)}" crossorigin="anonymous"`, `${SERVER}/widget-${version}.js`);
+  await page.goto('/host/start');
+  await page.waitForTimeout(1000);
+  await expect(widget(page)).toHaveCount(0);
+  expect(await page.evaluate(() => 'AudioFeedback' in window)).toBe(false);
+  expect(blocked.join('\n')).toMatch(/integrity/i);
 });
 
 test('toetsen en klikken op het kaartje lekken niet naar de app', async ({ page }) => {

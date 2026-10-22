@@ -1,11 +1,13 @@
 // HTTP-laag zonder framework. Routes:
-//   GET  /widget.js                  het script dat apps insluiten
+//   GET  /widget-<versie>.js         een vaste release, voor apps (met integrity)
+//   GET  /widget-releases.json       versies en hun sha384
+//   GET  /widget.js                  de nieuwste build, voor de demo en ontwikkelen
 //   POST /api/recordings             upload (multipart: meta + audio), CORS per origin
 //   GET  /api/recordings             lijst              ┐
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
 //   DELETE /api/recordings/:id       verwijderen        │
 //   GET  /admin                      luisterpagina      ┘
-//   GET  /                           demopagina
+//   GET  /                           demopagina (alleen met DEMO aan)
 //   GET  /health
 
 import { createReadStream } from 'node:fs';
@@ -14,20 +16,36 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { renderAdmin } from './admin.ts';
 import { Storage, type StoredRecording } from './storage.ts';
 import { AUDIO_TYPES, baseAudioType, parseMeta, sniffAudio, ValidationError } from './validate.ts';
 
 export interface AppConfig {
   storage: Storage;
-  /** Exacte origins, of met een wildcard-subdomein: https://*.example.nl. "*" staat alles toe. */
+  /**
+   * Exacte origins, of met een wildcard-subdomein: https://*.example.nl. "*" staat alles toe.
+   * Met "=project" erachter (of "=a|b") mag die origin alleen onder die projecten insturen.
+   */
   allowedOrigins: string[];
   adminPassword: string;
   maxUploadBytes: number;
-  /** Uploads per IP per uur. */
+  /** Bovengrens voor alle opnames samen op schijf. 0 is geen grens. */
+  maxStorageBytes: number;
+  /** Uploads die tegelijk binnen mogen komen; elke upload staat even in het geheugen. */
+  maxConcurrentUploads: number;
+  /** Uploads per IP (IPv6: per /64) per uur. */
   rateLimit: number;
+  /** Uploads per uur van alle IP's samen. */
+  rateLimitGlobal: number;
+  /** Gaat terug naar de widget, die het na het versturen laat zien. 0 is: alles bewaren. */
+  retentionDays: number;
+  /** Demopagina op /, en uploads vanaf de eigen origin onder het project "demo". */
+  demo: boolean;
   /** Map met widget.js en de statische bestanden. */
   distDir: string;
+  /** Map met de uitgebrachte widget-<versie>.js en integrity.json. */
+  releasesDir: string;
   publicDir: string;
   version: string;
   trustProxy: boolean;
@@ -51,11 +69,18 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(data);
 }
 
-export function originAllowed(origin: string, allowed: string[]): boolean {
-  for (const rule of allowed) {
-    if (rule === '*' || rule === origin) return true;
-    const m = /^(https?:\/\/)\*\.(.+)$/.exec(rule);
-    if (m && origin.startsWith(m[1]!) && origin.endsWith(`.${m[2]}`)) return true;
+function originMatches(origin: string, rule: string): boolean {
+  if (rule === '*' || rule === origin) return true;
+  const m = /^(https?:\/\/)\*\.(.+)$/.exec(rule);
+  return !!m && origin.startsWith(m[1]!) && origin.endsWith(`.${m[2]}`);
+}
+
+/** Zonder project: mag deze origin überhaupt insturen. Met project: ook onder die naam. */
+export function originAllowed(origin: string, allowed: string[], project?: string): boolean {
+  for (const entry of allowed) {
+    const [rule, projects] = entry.split('=', 2) as [string, string | undefined];
+    if (!originMatches(origin, rule)) continue;
+    if (project === undefined || !projects || projects.split('|').includes(project)) return true;
   }
   return false;
 }
@@ -70,8 +95,25 @@ function hostOf(origin: string): string {
 
 function clientIp(req: IncomingMessage, trustProxy: boolean): string {
   const fwd = req.headers['x-forwarded-for'];
-  if (trustProxy && typeof fwd === 'string') return fwd.split(',')[0]!.trim();
+  // Elke proxy zet achteraan wie hem aansprak. Het laatste adres komt dus van onze
+  // eigen proxy (Caddy); wat ervoor staat, kan de client zelf hebben meegestuurd.
+  if (trustProxy && typeof fwd === 'string') {
+    const last = fwd.split(',').at(-1)!.trim();
+    if (isIP(last)) return last;
+  }
   return req.socket.remoteAddress ?? '';
+}
+
+/** De sleutel voor de rate limit. Eén IPv6-aansluiting heeft een heel /64, dus die tellen we samen. */
+export function rateKey(ip: string): string {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return mapped[1]!;
+  if (isIP(ip) !== 6) return ip;
+  const [head = '', tail = ''] = ip.split('%')[0]!.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...h, ...Array<string>(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
 /** Breekt de stream af zodra hij groter wordt dan max, ook zonder (eerlijke) Content-Length. */
@@ -86,17 +128,30 @@ function limitBytes(max: number): Transform {
   });
 }
 
+const MAX_TRACKED_IPS = 10_000;
+const DEMO_PROJECT = 'demo';
+
 export function createApp(config: AppConfig) {
   const { storage } = config;
   const uploads = new Map<string, number[]>();
+  let recentUploads: number[] = [];
+  let activeUploads = 0;
 
   function rateLimited(ip: string): boolean {
-    const hourAgo = Date.now() - 60 * 60 * 1000;
-    const recent = (uploads.get(ip) ?? []).filter((t) => t > hourAgo);
-    recent.push(Date.now());
-    uploads.set(ip, recent);
-    if (uploads.size > 10_000) uploads.clear();
-    return recent.length > config.rateLimit;
+    const now = Date.now();
+    const hourAgo = now - 60 * 60 * 1000;
+    const key = rateKey(ip);
+    const recent = (uploads.get(key) ?? []).filter((t) => t > hourAgo);
+    // Opnieuw invoegen zet de sleutel achteraan; vooraan staat dan wie het langst niets deed.
+    uploads.delete(key);
+    uploads.set(key, recent);
+    while (uploads.size > MAX_TRACKED_IPS) uploads.delete(uploads.keys().next().value!);
+    if (recent.length >= config.rateLimit) return true;
+    recentUploads = recentUploads.filter((t) => t > hourAgo);
+    if (recentUploads.length >= config.rateLimitGlobal) return true;
+    recent.push(now);
+    recentUploads.push(now);
+    return false;
   }
 
   function isAdmin(req: IncomingMessage): boolean {
@@ -121,7 +176,7 @@ export function createApp(config: AppConfig) {
     return false;
   }
 
-  async function serveFile(res: ServerResponse, path: string, type: string, cache: string): Promise<void> {
+  async function serveFile(res: ServerResponse, path: string, type: string, cache: string, cors = false): Promise<void> {
     let data: Buffer;
     try {
       data = await readFile(path);
@@ -134,17 +189,31 @@ export function createApp(config: AppConfig) {
       'Cache-Control': cache,
       // Ook te laden door apps die Cross-Origin-Embedder-Policy aanzetten.
       'Cross-Origin-Resource-Policy': 'cross-origin',
+      // integrity="…" werkt alleen met crossorigin="anonymous", en dat vraagt om CORS.
+      ...(cors ? { 'Access-Control-Allow-Origin': '*' } : {}),
     });
     res.end(data);
   }
 
-  async function handleUpload(req: IncomingMessage, res: ServerResponse, origin: string): Promise<void> {
+  async function handleUpload(req: IncomingMessage, res: ServerResponse, origin: string, sameOrigin: boolean): Promise<void> {
     const declared = Number(req.headers['content-length'] ?? 0);
     if (declared > config.maxUploadBytes) throw new HttpError(413, 'upload te groot');
     const contentType = req.headers['content-type'] ?? '';
     if (!contentType.startsWith('multipart/form-data')) throw new HttpError(415, 'verwacht multipart/form-data');
+    if (activeUploads >= config.maxConcurrentUploads) {
+      res.setHeader('Retry-After', '30');
+      throw new HttpError(503, 'het is even druk, probeer het zo opnieuw');
+    }
     if (rateLimited(clientIp(req, config.trustProxy))) throw new HttpError(429, 'te veel opnames, probeer het later opnieuw');
+    activeUploads++;
+    try {
+      await receiveUpload(req, res, contentType, origin, sameOrigin);
+    } finally {
+      activeUploads--;
+    }
+  }
 
+  async function receiveUpload(req: IncomingMessage, res: ServerResponse, contentType: string, origin: string, sameOrigin: boolean): Promise<void> {
     const limited = req.pipe(limitBytes(config.maxUploadBytes));
     req.on('error', (err) => limited.destroy(err));
     let form: FormData;
@@ -163,15 +232,22 @@ export function createApp(config: AppConfig) {
     }
 
     const meta = parseMeta(form.get('meta'));
+    // De demopagina staat open voor iedereen; zijn opnames blijven apart van die van de apps.
+    const projectAllowed = sameOrigin ? meta.project === DEMO_PROJECT : originAllowed(origin, config.allowedOrigins, meta.project);
+    if (!projectAllowed) throw new HttpError(403, `deze website mag niet insturen onder project ${meta.project}`);
     const audio = form.get('audio');
     if (!(audio instanceof Blob) || audio.size === 0) throw new ValidationError('audio ontbreekt');
-    const bytes = new Uint8Array(await audio.arrayBuffer());
-    const sniffed = sniffAudio(bytes.subarray(0, 12));
+    const sniffed = sniffAudio(new Uint8Array(await audio.slice(0, 12).arrayBuffer()));
     const claimed = baseAudioType(meta.mimeType);
     if (!sniffed) throw new ValidationError('audio is geen webm, ogg of mp4');
     if (sniffed !== claimed) meta.mimeType = sniffed;
 
-    if (await storage.exists(meta.id)) return json(res, 200, { id: meta.id, duplicate: true });
+    const reply = { id: meta.id, retentionDays: config.retentionDays };
+    if (await storage.exists(meta.id)) return json(res, 200, { ...reply, duplicate: true });
+    if (config.maxStorageBytes > 0 && storage.usedBytes + audio.size > config.maxStorageBytes) {
+      console.warn(`[upload] opslag vol (${Math.round(storage.usedBytes / 1024 / 1024)} MB), ${meta.project} geweigerd`);
+      throw new HttpError(507, 'de opslag is vol, probeer het later opnieuw');
+    }
     const { ext, contentType: audioType } = AUDIO_TYPES[sniffed]!;
     const record: StoredRecording = {
       ...meta,
@@ -179,11 +255,12 @@ export function createApp(config: AppConfig) {
       origin,
       audioFile: `${meta.id}.${ext}`,
       audioType,
-      sizeBytes: bytes.length,
+      sizeBytes: audio.size,
     };
-    await storage.save(record, bytes);
-    console.log(`[upload] ${record.project} ${record.id} ${Math.round(record.durationMs / 1000)}s ${record.url}`);
-    json(res, 201, { id: meta.id });
+    await storage.save(record, audio);
+    // Zonder URL: daar kunnen persoonsgegevens in staan, en de logs vallen buiten de bewaartermijn.
+    console.log(`[upload] ${record.project} ${record.id} ${Math.round(record.durationMs / 1000)}s`);
+    json(res, 201, reply);
   }
 
   async function serveAudio(req: IncomingMessage, res: ServerResponse, record: StoredRecording): Promise<void> {
@@ -228,7 +305,8 @@ export function createApp(config: AppConfig) {
           res.setHeader('Vary', 'Origin');
         }
         const host = req.headers.host ?? '';
-        const sameOrigin = origin !== '' && hostOf(origin) === host;
+        // De eigen origin is alleen de demopagina; die mag alleen insturen als hij aanstaat.
+        const sameOrigin = config.demo && origin !== '' && hostOf(origin) === host;
         if (!origin || (!sameOrigin && !originAllowed(origin, config.allowedOrigins))) {
           throw new HttpError(403, 'deze website mag geen feedback insturen');
         }
@@ -240,10 +318,18 @@ export function createApp(config: AppConfig) {
           });
           return void res.end();
         }
-        return await handleUpload(req, res, origin);
+        return await handleUpload(req, res, origin, sameOrigin);
       }
 
       if (method === 'GET' || method === 'HEAD') {
+        const release = /^\/widget-(\d+\.\d+\.\d+)\.js$/.exec(path);
+        if (release) {
+          // Verandert nooit: een nieuwe versie krijgt een nieuwe naam (scripts/release.ts).
+          return await serveFile(res, join(config.releasesDir, `widget-${release[1]}.js`), 'text/javascript; charset=utf-8', 'public, max-age=31536000, immutable', true);
+        }
+        if (path === '/widget-releases.json') {
+          return await serveFile(res, join(config.releasesDir, 'integrity.json'), 'application/json; charset=utf-8', 'no-cache', true);
+        }
         if (path === '/widget.js') {
           return await serveFile(res, join(config.distDir, 'widget.js'), 'text/javascript; charset=utf-8', 'public, max-age=300');
         }
@@ -256,7 +342,7 @@ export function createApp(config: AppConfig) {
           return await serveFile(res, join(config.distDir, 'fonts', 'montserrat-latin-wght-normal.woff2'), 'font/woff2', 'public, max-age=31536000, immutable');
         }
         if (path === '/health') return json(res, 200, { ok: true, version: config.version });
-        if (path === '/' || path === '/demo' || path.startsWith('/demo/')) {
+        if (config.demo && (path === '/' || path === '/demo' || path.startsWith('/demo/'))) {
           return await serveFile(res, join(config.publicDir, 'demo.html'), 'text/html; charset=utf-8', 'no-cache');
         }
         if (path === '/admin.js') {
@@ -302,7 +388,8 @@ export function createApp(config: AppConfig) {
     } catch (err) {
       if (err instanceof ValidationError) return json(res, 400, { error: err.message });
       if (err instanceof HttpError) {
-        if (err.status === 413) res.setHeader('Connection', 'close');
+        // De body is nog niet gelezen; de verbinding hergebruiken heeft dan geen zin.
+        if (err.status === 413 || err.status === 429 || err.status === 503) res.setHeader('Connection', 'close');
         return json(res, err.status, { error: err.message });
       }
       console.error('[error]', err);

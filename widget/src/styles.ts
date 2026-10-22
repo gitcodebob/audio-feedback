@@ -84,6 +84,9 @@ export const css = /* css */ `
 .body { padding: 16px; display: grid; gap: 12px; }
 .text { margin: 0; color: var(--af-muted); font-size: 13px; font-weight: 400; }
 .text strong { color: var(--af-fg); font-weight: 600; }
+.text a { color: var(--af-fg); text-decoration: underline; text-underline-offset: 2px; }
+.text a:focus-visible { outline: 2px solid var(--af-focus); outline-offset: 2px; border-radius: 2px; }
+.code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 0.02em; }
 .status { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
 .time { font-size: 24px; font-weight: 600; line-height: 1; }
 .limit { color: var(--af-muted); font-size: 12px; }

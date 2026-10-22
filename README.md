@@ -1,15 +1,18 @@
 # audio-feedback
 
 Laat gebruikers van een webapp inspreken wat ze zien of ervaren. Een zwevend kaartje in de
-hoek neemt audio op (met pauzeren en hervatten) en stuurt die naar onze server, samen met de
-URL van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
+hoek neemt audio op (met pauzeren en hervatten) en stuurt die naar onze server, samen met het
+adres van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 
 ```html
-<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
+<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget-0.2.0.js"
+  integrity="sha384-fCLzESZo1gdmIlEW3vJYjFrM3SQxy3rVq150kyfGbaesVR5MlPf7BGRnFi1gt1I2" crossorigin="anonymous"
+  data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
 ```
 
-Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
-28 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
+Meer is er niet nodig om het in een app te zetten. De `integrity` zorgt dat de browser alleen
+precies dat bestand uitvoert (zie [Releases](#releases)). De widget heeft geen afhankelijkheden, is
+31 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
 
 ## Voorstel
 
@@ -21,20 +24,22 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
    **Stoppen**. Geminimaliseerd toont de pil de lopende tijd.
 3. **Terugluisteren**: een speler, en de lijst met pagina's die meegaan, zodat de gebruiker ziet
    wat er verstuurd wordt. Daarna **Versturen** of **Weggooien**.
-4. **Bedankt**, en daarna weer klaar voor een nieuwe opname.
+4. **Bedankt**, met een kenmerk (de eerste 8 tekens van het id) en de bewaartermijn. Met dat
+   kenmerk is de opname in `/admin` terug te vinden als iemand hem wil laten inzien of
+   verwijderen. Na 30 seconden is het kaartje weer klaar voor een nieuwe opname.
 
 ### Wat er meegaat
 
 | Veld | Inhoud |
 |---|---|
 | audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut |
-| `url`, `title` | de pagina waar de opname begon |
-| `timeline` | elke pagina-wissel tijdens de opname (`pushState`, hash, gewone navigatie), plus pauze en hervat, met de positie in de opname. In de beheerpagina klik je op een tijd en hoor je wat er bij die pagina gezegd werd |
+| `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Zie `data-keep-params` en `data-strip-hash` |
+| `timeline` | elke pagina-wissel tijdens de opname (`pushState`, gewone navigatie, en de hash als die meegaat), plus pauze en hervat, met de positie in de opname. In de beheerpagina klik je op een tijd en hoor je wat er bij die pagina gezegd werd |
 | `context` | vrije sleutel-waardeparen van de app zelf, bijvoorbeeld versie of omgeving |
 | `client` | user agent, taal, venstergrootte |
 
 Wat er niet meegaat: de inhoud van de pagina, schermafbeeldingen, cookies of IP-adres in de
-opslag.
+opslag. Ook de serverlog bevat alleen project, id en duur, geen URL.
 
 ### Keuzes
 
@@ -60,9 +65,13 @@ opslag.
 - **Geen tests verstoren.** Onder `navigator.webdriver` (Playwright, Selenium) toont de widget
   zich niet, tenzij je `data-allow-webdriver` zet. Zo blijven e2e-tests en schermafdrukken van
   de apps zoals ze waren.
-- **Privacy.** Spraak is een persoonsgegeven. Het kaartje zegt vooraf wat er meegaat, er wordt
-  pas opgenomen na een klik, in een pauze staat de microfoon uit, en de server verwijdert
-  opnames na 90 dagen (`RETENTION_DAYS`). Een privacyverklaring per app blijft wel nodig.
+- **Privacy.** Spraak is een persoonsgegeven. Het kaartje zegt vooraf wat er meegaat, en
+  linkt met `data-privacy-url` naar de privacyverklaring van de app. Opnemen begint pas na een
+  klik, en in een pauze wordt niets opgenomen. De server verwijdert opnames na 90 dagen
+  (`RETENTION_DAYS`). Een opname die niet verstuurd is, blijft hooguit een dag in de browser
+  staan. Anders krijgt de volgende gebruiker van een gedeelde computer hem nog aangeboden. Apps
+  met een login roepen bij uitloggen `AudioFeedback.clear()` aan. Een privacyverklaring per app
+  blijft nodig.
 
 ## De drie apps: kunnen ze ermee overweg?
 
@@ -82,26 +91,32 @@ er bij de server aankomt.
 
 Per app, om op te letten:
 
-- **defend-greenland**: zet de tag in `index.html` na de `<script type="module">` (regel ~2554).
-  De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
+- **defend-greenland**: zet de tag in `index.html` na de `<script type="module">` (regel ~2554),
+  met `data-keep-params="quality" data-strip-hash="false"`, anders ontbreken kwaliteit en level
+  in de tijdlijn. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
   `webgl.spec.ts` faalt op elke `console.error`, maar onder Playwright laat de widget zich niet
   zien, dus dat blijft groen. `deploy:check` en de buildtests kijken alleen naar `dist/`, en daar
   komt de widget niet in.
-- **elektra-ontwerper**: zet de tag in `apps/web/src/index.html` na `<app-root>`. Op 1280×720
+- **elektra-ontwerper**: zet de tag in `apps/web/src/index.html` na `<app-root>`, met
+  `data-keep-params="proef"`. Op 1280×720
   bedekt het kaartje de onderkant van de sneltoetsenlijst rechts. Gebruikers kunnen het
   verslepen of minimaliseren. Wie het standaard klein wil: `data-minimized`.
 - **meterkast**: zet de tag in `index.html` na de `<script type="module">`. Het kaartje staat
-  er ook op het inlogscherm. Bij afdrukken (groepenlijst) verdwijnt het. De ontwerp-id staat in
-  de URL, dus in de feedback is te zien over welk ontwerp het ging. Wil je dat niet:
-  `data-strip-hash`.
+  er ook op het inlogscherm. Bij afdrukken (groepenlijst) verdwijnt het. De app routeert met de
+  hash (`#/ontwerp/<id>/<tab>`), dus zet `data-strip-hash="false"`. Dan is in de feedback te zien
+  over welk ontwerp en welke tab het ging. Roep bij uitloggen `AudioFeedback.clear()` aan.
 
 ## Integreren
 
 ```html
 <script
-  src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js"
+  src="https://audio-feedback.hetzner.bobreijnders.nl/widget-0.2.0.js"
+  integrity="sha384-fCLzESZo1gdmIlEW3vJYjFrM3SQxy3rVq150kyfGbaesVR5MlPf7BGRnFi1gt1I2"
+  crossorigin="anonymous"
   data-project="meterkast"
   data-position="bottom-right"
+  data-strip-hash="false"
+  data-privacy-url="https://meterkast.example.nl/privacy"
   data-context='{"versie": "1.4.0"}'
   defer></script>
 ```
@@ -114,7 +129,9 @@ Per app, om op te letten:
 | `data-max-duration` | `600` | maximale opnameduur in seconden (hooguit 1800) |
 | `data-hosts` | alle | komma-gescheiden hostnamen waarop de widget verschijnt, bijvoorbeeld alleen productie |
 | `data-minimized` | uit | begint als pil |
-| `data-strip-query` / `data-strip-hash` | uit | laat query of hash weg uit de opgeslagen URL's |
+| `data-strip-query` / `data-strip-hash` | aan | laat query of hash weg uit de opgeslagen URL's. Zet `="false"` om ze te houden |
+| `data-keep-params` | — | komma-gescheiden queryparameters die ondanks `data-strip-query` meegaan, zoals `tab,proef` |
+| `data-privacy-url` | — | link "Hoe we hiermee omgaan" in het kaartje |
 | `data-context` | — | JSON-object met extra velden |
 | `data-allow-webdriver` | uit | ook tonen onder Playwright/Selenium |
 | `data-manual` | uit | niet vanzelf starten; roep `AudioFeedback.init()` aan |
@@ -125,11 +142,30 @@ Vanuit de app zelf:
 AudioFeedback.setContext({ gebruiker: 'tester-3', ontwerp: id }); // gaat mee met de volgende opname
 AudioFeedback.open();      // kaartje openklappen
 AudioFeedback.minimize();
+AudioFeedback.clear();     // alle opnames die nog in deze browser staan weggooien, bij uitloggen
 AudioFeedback.destroy();   // weghalen
 AudioFeedback.init({ project: 'x', position: 'top-left' }); // met data-manual
 ```
 
 Instellingen kunnen ook in `window.AudioFeedbackConfig = {...}` vóór het script.
+
+### Releases
+
+De widget draait met alle rechten in de app die hem laadt. Wie `widget.js` op de server kan
+aanpassen, zou dus in elke app kunnen meekijken. Daarom laden apps een **vaste release**:
+`widget-<versie>.js` verandert nooit, en de scripttag draagt de sha384-hash van dat bestand. Een
+aangepast bestand voert de browser niet uit. De widget blijft dan weg, met een melding in de
+console.
+
+- **Uitbrengen:** verhoog de versie in `package.json` en in `VERSION` in `widget/src/widget.ts`,
+  draai `npm run release`, commit `releases/` en rol uit. Het script drukt de nieuwe scripttag
+  af. Het weigert een bestaande versie met andere inhoud te overschrijven.
+- **Bijwerken:** daarna zet elke app zelf de nieuwe tag erin. Tot die tijd blijft hij gewoon
+  de oude versie laden: oude releases staan in git en blijven bestaan.
+- **Wat waar staat:** `releases/integrity.json` (ook op `/widget-releases.json`) bevat alle
+  versies met hun hash. De tests controleren dat die klopt met de bestanden.
+- **`/widget.js`:** is altijd de nieuwste build, voor de demo en lokaal ontwikkelen. Gebruik
+  hem niet in apps.
 
 Krijgt een app ooit een Content-Security-Policy, dan zijn nodig: `script-src` en `connect-src`
 voor de server, en `media-src blob:` voor het terugluisteren. Een `Permissions-Policy` moet
@@ -142,13 +178,15 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 
 | Route | |
 |---|---|
-| `GET /widget.js` | het script |
-| `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte en het aantal per IP. Dezelfde id twee keer is geen dubbele |
+| `GET /widget-<versie>.js` | een vaste release, voor apps. `immutable`, met CORS voor `integrity` |
+| `GET /widget-releases.json` | alle releases met hun sha384 |
+| `GET /widget.js` | de nieuwste build, voor de demo en ontwikkelen |
+| `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
 | `GET /admin` | beheerpagina: luisteren, per pagina naar de tijd springen, filteren per project, downloaden, verwijderen |
 | `GET /api/recordings[?project=]` | lijst als JSON |
 | `GET /api/recordings/:id/audio` | audio, met Range-requests |
 | `DELETE /api/recordings/:id` | verwijderen |
-| `GET /` | demopagina met de widget |
+| `GET /` | demopagina met de widget, alleen met `DEMO` aan |
 | `GET /health` | `{ ok, version }` |
 
 `/admin` en de `GET`/`DELETE` op `/api/recordings` vragen Basic auth: een willekeurige naam, en
@@ -156,13 +194,17 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 
 | Variabele | Standaard | |
 |---|---|---|
-| `ALLOWED_ORIGINS` | leeg: alleen de eigen origin | komma-gescheiden. Mag `https://*.example.nl` of `*` bevatten |
+| `ALLOWED_ORIGINS` | leeg: alleen de eigen origin (met `DEMO` aan) | komma-gescheiden. Mag `https://*.example.nl` of `*` bevatten. Met `=project` (of `=a\|b`) erachter mag die origin alleen onder die projecten insturen |
 | `ADMIN_PASSWORD` | leeg: beheer staat uit | |
 | `DATA_DIR` | `./data` | opnames in `recordings/<id>.webm` en `<id>.json` |
 | `RETENTION_DAYS` | `90` | ouder wordt verwijderd. `0` bewaart alles |
 | `MAX_UPLOAD_MB` | `9.5` | onder de 10 MB van de host-Caddy |
-| `RATE_LIMIT_PER_HOUR` | `60` | uploads per IP |
-| `TRUST_PROXY` | `true` | IP uit `X-Forwarded-For` (Caddy) |
+| `MAX_STORAGE_MB` | `2048` | alle opnames samen; daarboven geeft een upload 507. `0` is geen grens |
+| `MAX_CONCURRENT_UPLOADS` | `4` | daarboven 503 met `Retry-After`; een upload staat even in het geheugen |
+| `RATE_LIMIT_PER_HOUR` | `60` | uploads per IP, en per /64 bij IPv6 |
+| `RATE_LIMIT_GLOBAL_PER_HOUR` | `600` | uploads van alle IP's samen |
+| `TRUST_PROXY` | `true` | IP uit `X-Forwarded-For`, het laatste adres (dat van Caddy) |
+| `DEMO` | `true` | demopagina op `/`. Uploads vanaf de eigen origin mogen dan, maar alleen onder project `demo` |
 | `PORT`, `HOST` | `8080`, `0.0.0.0` | |
 
 ## Ontwikkelen
@@ -201,11 +243,13 @@ run_app(project_dir="/home/botrey/projects/audio-feedback", app="audio-feedback"
 ```
 
 Verifiëren: de live `widget.js` hoort byte-gelijk te zijn aan een verse lokale build
-(esbuild is deterministisch).
+(esbuild is deterministisch), en de live release aan zijn hash in `releases/integrity.json`.
 
 ```bash
 npm run build && curl -fsS https://audio-feedback.hetzner.bobreijnders.nl/widget.js | cmp - dist/widget.js && echo live == build
+v=$(node -p 'require("./package.json").version')
+[ "sha384-$(curl -fsS https://audio-feedback.hetzner.bobreijnders.nl/widget-$v.js | openssl dgst -sha384 -binary | base64)" = "$(node -p "require('./releases/integrity.json')['$v']")" ] && echo release $v klopt
 ```
 
-Een nieuwe app laten insturen: voeg zijn origin toe aan `ALLOWED_ORIGINS` in `compose.yaml` en
-rol opnieuw uit.
+Een nieuwe app laten insturen: voeg `<origin>=<project>` toe aan `ALLOWED_ORIGINS` in
+`compose.yaml` en rol opnieuw uit.

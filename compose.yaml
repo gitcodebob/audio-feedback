@@ -23,12 +23,16 @@ services:
     environment:
       TZ: Europe/Amsterdam
       DATA_DIR: /data
-      # Welke sites mogen insturen. Een nieuwe app? Zet hem hier bij en rol opnieuw uit.
+      # Welke sites mogen insturen, en onder welk project (=data-project van de app).
+      # Een nieuwe app? Zet hem hier bij en rol opnieuw uit.
       ALLOWED_ORIGINS: >-
-        https://defend-greenland.hetzner.bobreijnders.nl,
-        https://elektra-ontwerper.hetzner.bobreijnders.nl,
-        https://meterkast.hetzner.bobreijnders.nl
+        https://defend-greenland.hetzner.bobreijnders.nl=defend-greenland,
+        https://elektra-ontwerper.hetzner.bobreijnders.nl=elektra-ontwerper,
+        https://meterkast.hetzner.bobreijnders.nl=meterkast
       RETENTION_DAYS: "90"
+      # De demopagina op / staat aan. Wat daar binnenkomt, staat in /admin onder project "demo".
+      DEMO: "true"
+      MAX_STORAGE_MB: "2048"
 
     restart: unless-stopped
 

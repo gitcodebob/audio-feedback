@@ -10,7 +10,7 @@ import { css, FONT_FAMILY } from './styles.ts';
 import type { RecordingMeta, TimelineEntry } from './types.ts';
 import { upload, UploadError } from './upload.ts';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export type Corner = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 
@@ -22,6 +22,9 @@ export interface WidgetConfig {
   maxDurationSec: number;
   stripQuery: boolean;
   stripHash: boolean;
+  keepParams: string[];
+  /** Link "Hoe we hiermee omgaan" in het kaartje; leeg is geen link. */
+  privacyUrl: string;
   startMinimized: boolean;
   context: Record<string, string>;
 }
@@ -39,6 +42,13 @@ type View =
 
 /** Een tab die korter dan dit geleden nog schreef, neemt nog op; die opname is niet van ons. */
 const HEARTBEAT_STALE_MS = 10_000;
+/**
+ * Een opname die niet verstuurd is, blijft hooguit zo lang in de browser. Op een gedeelde
+ * computer krijgt de volgende gebruiker hem anders nog dagen later aangeboden.
+ */
+const LOCAL_TTL_MS = 24 * 60 * 60 * 1000;
+/** Lang genoeg om het kenmerk over te nemen. */
+const SENT_VISIBLE_MS = 30_000;
 const DRAG_THRESHOLD_PX = 4;
 const MARGIN_PX = 16;
 
@@ -120,6 +130,8 @@ export class FeedbackWidget {
   private ticker = 0;
   private sentTimer = 0;
   private context: Record<string, string>;
+  /** Van de laatst verstuurde opname, voor het bedankje. */
+  private receipt: { kenmerk: string; retentionDays?: number } | null = null;
   private readonly storageKey: string;
   private readonly config: WidgetConfig;
   private releaseLock: (() => void) | null = null;
@@ -165,6 +177,16 @@ export class FeedbackWidget {
     this.setMinimized(true);
   }
 
+  /** Alle lokale opnames weg, ook een lopende of een die klaarstaat. Voor apps die dit bij uitloggen aanroepen. */
+  async clear(): Promise<void> {
+    await this.stopRecorder();
+    this.clearSession();
+    this.receipt = null;
+    window.clearTimeout(this.sentTimer);
+    await this.store.clear().catch(() => {});
+    this.setView({ name: 'idle' });
+  }
+
   destroy(): void {
     void this.recorder?.stop();
     this.tracker?.stop();
@@ -205,7 +227,17 @@ export class FeedbackWidget {
   private async checkPending(): Promise<void> {
     if (this.view.name !== 'idle' || this.session) return;
     const now = Date.now();
-    const candidates = (await this.store.sessions().catch(() => []))
+    const sessions = await this.store.sessions().catch(() => []);
+    // Verlopen opnames gaan weg, van elk project op deze origin. Een tab die er nog
+    // een vasthoudt (de lock), is ermee bezig; die laten we staan.
+    for (const s of sessions.filter((s) => now - s.heartbeat > LOCAL_TTL_MS)) {
+      const release = await this.claim(s.meta.id);
+      if (!release) continue;
+      await this.store.remove(s.meta.id).catch(() => {});
+      release();
+    }
+    const candidates = sessions
+      .filter((s) => now - s.heartbeat <= LOCAL_TTL_MS)
       .filter((s) => s.meta.project === this.config.project)
       // Zonder Web Locks valt alleen op de hartslag te zien of een andere tab nog bezig is.
       .filter((s) => navigator.locks || s.status === 'ready' || now - s.heartbeat > HEARTBEAT_STALE_MS)
@@ -275,7 +307,7 @@ export class FeedbackWidget {
     const release = await this.claim(meta.id);
     if (release) this.hold(release);
     this.tracker = new PageTracker(
-      { stripQuery: this.config.stripQuery, stripHash: this.config.stripHash },
+      { stripQuery: this.config.stripQuery, stripHash: this.config.stripHash, keepParams: this.config.keepParams },
       () => recorder.elapsedMs(),
       (entry) => this.addTimeline(entry),
     );
@@ -340,7 +372,8 @@ export class FeedbackWidget {
     this.setView({ name: 'uploading' });
     const audio = new Blob(this.chunks, { type: session.meta.mimeType });
     try {
-      await upload(this.config.endpoint, { ...session.meta, context: { ...session.meta.context } }, audio);
+      const { retentionDays } = await upload(this.config.endpoint, { ...session.meta, context: { ...session.meta.context } }, audio);
+      this.receipt = { kenmerk: session.meta.id.slice(0, 8), retentionDays };
     } catch (err) {
       const e = err instanceof UploadError ? err : new UploadError('Versturen lukte niet.', true);
       this.setView({ name: 'error', message: e.message, action: e.retryable ? 'retry-upload' : 'discard' });
@@ -353,17 +386,20 @@ export class FeedbackWidget {
       if (this.view.name !== 'sent') return;
       this.setView({ name: 'idle' });
       void this.checkPending();
-    }, 4_000);
+    }, SENT_VISIBLE_MS);
+  }
+
+  private async stopRecorder(): Promise<void> {
+    if (!this.recorder) return;
+    window.clearInterval(this.ticker);
+    this.tracker?.stop();
+    this.tracker = null;
+    await this.recorder.stop();
+    this.recorder = null;
   }
 
   private async discard(): Promise<void> {
-    if (this.recorder) {
-      window.clearInterval(this.ticker);
-      this.tracker?.stop();
-      this.tracker = null;
-      await this.recorder.stop();
-      this.recorder = null;
-    }
+    await this.stopRecorder();
     if (this.session) await this.store.remove(this.session.meta.id).catch(() => {});
     this.clearSession();
     this.setView({ name: 'idle' });
@@ -457,9 +493,13 @@ export class FeedbackWidget {
   private renderBody(v: View, elapsed: number): string {
     const max = formatTime(this.config.maxDurationSec * 1000);
     switch (v.name) {
-      case 'idle':
-        return `<p class="text">Vertel wat je ziet of ervaart. We sturen je opname mee met het adres van deze pagina, niet wat er op je scherm staat.</p>
+      case 'idle': {
+        const privacy = this.config.privacyUrl
+          ? ` <a href="${escapeHtml(this.config.privacyUrl)}" target="_blank" rel="noopener noreferrer">Hoe we hiermee omgaan</a>`
+          : '';
+        return `<p class="text">Vertel wat je ziet of ervaart. Met je opname sturen we het adres en de titel mee van de pagina's die je bekijkt, en welke browser je gebruikt. Niet wat er op je scherm staat.${privacy}</p>
           <div class="row"><button class="record" data-action="record" data-autofocus>${icons.mic}Opnemen</button></div>`;
+      }
       case 'starting':
         return `<p class="text">Microfoon wordt gestart… Sta de microfoon toe als je browser erom vraagt.</p>`;
       case 'recording':
@@ -481,7 +521,7 @@ export class FeedbackWidget {
       case 'review':
       case 'pending': {
         const intro = v.name === 'pending'
-          ? `<p class="text"><strong>Er staat nog een opname klaar</strong> van ${formatTime(elapsed)} die niet is verstuurd.</p>`
+          ? `<p class="text"><strong>Er staat nog een opname klaar</strong> van ${formatTime(elapsed)} die niet is verstuurd. Na een dag wordt hij vanzelf weggegooid.</p>`
           : `<p class="text">Luister eventueel terug en verstuur je feedback.</p>`;
         return `${intro}
           <audio controls preload="metadata"></audio>
@@ -493,9 +533,16 @@ export class FeedbackWidget {
       }
       case 'uploading':
         return `<p class="text">Versturen…</p>`;
-      case 'sent':
+      case 'sent': {
+        const r = this.receipt;
+        const kept = r?.retentionDays ? ` We bewaren hem ${r.retentionDays} dagen.` : '';
+        const detail = r
+          ? `<p class="text">Kenmerk <strong class="code">${escapeHtml(r.kenmerk)}</strong>. Noem dit als je je opname wilt laten inzien of verwijderen.${kept}</p>`
+          : '';
         return `<p class="ok">Bedankt! Je feedback is verstuurd.</p>
+          ${detail}
           <div class="row"><button data-action="new" data-autofocus>Nog een opname</button></div>`;
+      }
       case 'error': {
         const buttons = {
           'retry-upload': `<button class="ghost" data-action="later">Later</button><button class="primary" data-action="send" data-autofocus>Opnieuw proberen</button>`,
