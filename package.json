@@ -1,0 +1,25 @@
+{
+  "name": "audio-feedback",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Inspreekbare feedback voor webapplicaties: een widget die audio opneemt en met de bekeken URL naar onze server stuurt",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "dev": "node scripts/build.ts --watch & node --watch server/index.ts",
+    "start": "node server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'tests/**/*.test.ts'",
+    "test:e2e": "npm run build && playwright test",
+    "check": "npm run typecheck && npm test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

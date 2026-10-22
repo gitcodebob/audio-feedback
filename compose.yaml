@@ -1,0 +1,56 @@
+# Met de hand onderhouden, dus zonder de marker van release-scripting: run-app laat dit bestand met rust.
+# Geheimen (ADMIN_PASSWORD) staan in .env naast dit bestand; die gaat niet mee in git of het image.
+name: audio-feedback
+
+services:
+  app:
+    build: .
+
+    # Alleen op de loopback van de host. run-app leest deze regel voor het Caddy-block.
+    ports:
+      - "127.0.0.1:3029:8080"
+
+    # Rootless Docker: container-root is op de host de gebruiker die deployde, en die mag in ./data.
+    user: "0:0"
+
+    volumes:
+      - ./data:/data
+
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      TZ: Europe/Amsterdam
+      DATA_DIR: /data
+      # Welke sites mogen insturen. Een nieuwe app? Zet hem hier bij en rol opnieuw uit.
+      ALLOWED_ORIGINS: >-
+        https://defend-greenland.hetzner.bobreijnders.nl,
+        https://elektra-ontwerper.hetzner.bobreijnders.nl,
+        https://meterkast.hetzner.bobreijnders.nl
+      RETENTION_DAYS: "90"
+
+    restart: unless-stopped
+
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8080/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
