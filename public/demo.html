@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Demo · ingesproken feedback</title>
 <style>
-  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #1b1f24; }
-  header { background: #1f5fbf; color: #fff; padding: 16px 24px; }
-  nav a { color: #fff; margin-right: 16px; }
+  @font-face { font-family: Montserrat; src: url(/fonts/montserrat-latin-wght-normal.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+  body { font: 16px/1.6 Montserrat, system-ui, sans-serif; margin: 0; color: #3c3c3c; background: #f6f8fa; }
+  header { background: #242f36; color: #fff; padding: 16px 24px; display: flex; gap: 24px; align-items: center; }
+  header strong { border-left: 5px solid #f8e800; padding-left: 10px; }
+  nav a { color: #fff; margin-right: 16px; text-decoration: none; font-weight: 500; }
+  nav a:hover { color: #f8e800; }
   main { max-width: 720px; padding: 24px; }
-  code { background: #eef0f2; padding: 1px 4px; border-radius: 4px; }
-  pre { background: #eef0f2; padding: 12px; border-radius: 8px; overflow: auto; }
+  code { background: #eaedf0; padding: 1px 4px; border-radius: 4px; }
+  pre { background: #fff; box-shadow: 1px 10px 40px #0000001f; padding: 12px; border-radius: 8px; overflow: auto; }
 </style>
 </head>
 <body>

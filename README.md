@@ -9,7 +9,7 @@ URL van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 ```
 
 Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
-26 kB groot (ongecomprimeerd) en raakt de CSS en de sneltoetsen van de app niet.
+28 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
 
 ## Voorstel
 
@@ -37,6 +37,11 @@ Wat er niet meegaat: de inhoud van de pagina, schermafbeeldingen, cookies of IP-
 opslag.
 
 ### Keuzes
+
+- **Huisstijl van topicus.nl**: geel `#f8e800` en donkerblauw `#242f36`, Montserrat, pilvormige
+  knoppen die bij hover van onderen vollopen. Volgt het donkere thema van het systeem. Montserrat
+  (OFL) komt van onze eigen server, via de FontFace-API met een eigen familienaam: geen verzoek
+  naar Google Fonts, en de lettertypen van de app blijven ongemoeid.
 
 - **Eén scripttag, Shadow DOM.** Werkt in elke stack (vanilla, Angular, React). De Shadow DOM
   houdt de CSS van de app buiten en die van ons binnen.

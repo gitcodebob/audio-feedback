@@ -6,7 +6,7 @@
 import { PageTracker } from './page-tracker.ts';
 import { Recorder, RecorderError } from './recorder.ts';
 import { SessionStore, type StoredSession } from './store.ts';
-import { css } from './styles.ts';
+import { css, FONT_FAMILY } from './styles.ts';
 import type { RecordingMeta, TimelineEntry } from './types.ts';
 import { upload, UploadError } from './upload.ts';
 
@@ -58,6 +58,18 @@ const icons = {
   stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>',
   minimize: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg>',
 };
+
+// @font-face in een Shadow DOM telt niet mee; een FontFace op document wel, en
+// die geldt dan ook binnen ons kaartje. De eigen familienaam botst niet met de app.
+function loadFont(endpoint: string): void {
+  if (typeof FontFace === 'undefined' || [...document.fonts].some((f) => f.family === FONT_FAMILY)) return;
+  const face = new FontFace(FONT_FAMILY, `url(${endpoint}/fonts/montserrat-latin-wght-normal.woff2) format("woff2")`, {
+    weight: '100 900',
+    display: 'swap',
+  });
+  document.fonts.add(face);
+  face.load().catch(() => {}); // zonder lettertype valt hij terug op system-ui
+}
 
 function formatTime(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -127,6 +139,7 @@ export class FeedbackWidget {
       this.host.addEventListener(type, (e) => e.stopPropagation());
     }
     this.root = this.host.attachShadow({ mode: 'open' });
+    loadFont(config.endpoint);
     this.root.addEventListener('click', (e) => this.onClick(e as MouseEvent));
     this.root.addEventListener('pointerdown', (e) => this.onPointerDown(e as PointerEvent));
 
@@ -412,7 +425,7 @@ export class FeedbackWidget {
 
     if (this.minimized) {
       const dot = busy ? `<span class="dot ${v.name === 'paused' ? 'paused' : 'live'}"></span>` : icons.mic;
-      const label = busy ? `<span class="time" data-time style="font-size:14px">${formatTime(elapsed)}</span>` : 'Feedback inspreken';
+      const label = busy ? `<span class="time" data-time>${formatTime(elapsed)}</span>` : 'Feedback inspreken';
       this.root.innerHTML = `<style>${css}</style>
         <button class="pill" data-action="expand" data-drag data-autofocus
           aria-label="Feedback-kaartje openen${busy ? ', opname loopt' : ''}">${dot}${label}</button>`;
@@ -474,7 +487,7 @@ export class FeedbackWidget {
           <audio controls preload="metadata"></audio>
           ${this.renderPages()}
           <div class="row">
-            <button data-action="discard">Weggooien</button>
+            <button class="ghost" data-action="discard">Weggooien</button>
             <button class="primary" data-action="send" data-autofocus>Versturen</button>
           </div>`;
       }
@@ -485,9 +498,9 @@ export class FeedbackWidget {
           <div class="row"><button data-action="new" data-autofocus>Nog een opname</button></div>`;
       case 'error': {
         const buttons = {
-          'retry-upload': `<button data-action="later">Later</button><button class="primary" data-action="send" data-autofocus>Opnieuw proberen</button>`,
+          'retry-upload': `<button class="ghost" data-action="later">Later</button><button class="primary" data-action="send" data-autofocus>Opnieuw proberen</button>`,
           discard: `<button data-action="discard" data-autofocus>Weggooien</button>`,
-          back: `<button data-action="back" data-autofocus>Terug</button>`,
+          back: `<button class="ghost" data-action="back" data-autofocus>Terug</button>`,
         }[v.action];
         return `<p class="error" role="alert">${escapeHtml(v.message)}</p><div class="row">${buttons}</div>`;
       }
