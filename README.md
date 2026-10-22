@@ -5,7 +5,7 @@ hoek neemt audio op (met pauzeren en hervatten) en stuurt die naar onze server, 
 URL van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 
 ```html
-<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" defer></script>
+<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
 ```
 
 Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
@@ -107,6 +107,7 @@ Per app, om op te letten:
 | `data-endpoint` | origin van `widget.js` | waar de server staat |
 | `data-position` | `bottom-right` | `bottom-left`, `top-right`, `top-left` |
 | `data-max-duration` | `600` | maximale opnameduur in seconden (hooguit 1800) |
+| `data-hosts` | alle | komma-gescheiden hostnamen waarop de widget verschijnt, bijvoorbeeld alleen productie |
 | `data-minimized` | uit | begint als pil |
 | `data-strip-query` / `data-strip-hash` | uit | laat query of hash weg uit de opgeslagen URL's |
 | `data-context` | — | JSON-object met extra velden |
