@@ -6,6 +6,7 @@ FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
+COPY tsconfig.json ./
 COPY scripts/build.ts scripts/
 COPY widget widget
 RUN node scripts/build.ts
