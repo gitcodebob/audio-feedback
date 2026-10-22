@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo · ingesproken feedback</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; color: #1b1f24; }
+  header { background: #1f5fbf; color: #fff; padding: 16px 24px; }
+  nav a { color: #fff; margin-right: 16px; }
+  main { max-width: 720px; padding: 24px; }
+  code { background: #eef0f2; padding: 1px 4px; border-radius: 4px; }
+  pre { background: #eef0f2; padding: 12px; border-radius: 8px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Demo-app</strong>
+  <nav>
+    <a href="/demo/overzicht" data-spa>Overzicht</a>
+    <a href="/demo/instellingen?tab=profiel" data-spa>Instellingen</a>
+    <a href="#/details/42">Details (hash)</a>
+  </nav>
+</header>
+<main>
+  <h1 id="page-title">Start</h1>
+  <p>Dit is een nep-SPA: de links hierboven veranderen de URL zonder te herladen.
+    Neem rechtsonder iets op, klik ondertussen rond, en kijk daarna in <a href="/admin">/admin</a>
+    welke pagina's er bij de opname zijn vastgelegd.</p>
+  <p>In je eigen app is dit alles wat nodig is:</p>
+  <pre id="snippet"></pre>
+</main>
+<script>
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-spa]');
+    if (!a) return;
+    e.preventDefault();
+    history.pushState({}, '', a.href);
+    document.getElementById('page-title').textContent = a.textContent;
+    document.title = a.textContent + ' · demo';
+  });
+  document.getElementById('snippet').textContent =
+    `<script src="${location.origin}/widget.js" data-project="mijn-app" defer><\/script>`;
+</script>
+<script src="/widget.js" data-project="demo" data-context='{"omgeving":"demo"}' defer></script>
+</body>
+</html>

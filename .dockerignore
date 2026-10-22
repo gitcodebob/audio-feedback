@@ -1,0 +1,13 @@
+# Met de hand onderhouden, dus zonder de marker van release-scripting: run-app laat dit bestand met rust.
+.git
+.gitignore
+.env
+data/
+dist/
+node_modules
+test-results/
+playwright-report/
+*.md
+compose.yaml
+Dockerfile
+.dockerignore
