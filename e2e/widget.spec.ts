@@ -218,6 +218,16 @@ test('zonder data-allow-webdriver blijft de widget weg in geautomatiseerde brows
   await expect(widget(page)).toHaveCount(0);
 });
 
+test('met data-hosts verschijnt de widget alleen op die hostnamen', async ({ page }) => {
+  serveHost('data-hosts="app.example.nl, localhost"');
+  await page.goto('/host/start');
+  await expect(button(page, 'Opnemen')).toBeVisible();
+  serveHost('data-hosts="app.example.nl"');
+  await page.goto('/host/start');
+  await page.waitForFunction(() => !!(window as unknown as { AudioFeedback?: unknown }).AudioFeedback);
+  await expect(widget(page)).toHaveCount(0);
+});
+
 test('het kaartje laat zich verslepen en blijft daar na herladen', async ({ page }) => {
   serveHost();
   await page.goto('/host/start');

@@ -11,6 +11,8 @@ import { FeedbackWidget, VERSION, type Corner, type WidgetConfig } from './widge
 interface InitOptions extends Partial<WidgetConfig> {
   /** Ook tonen als de browser door een testtool wordt bestuurd (navigator.webdriver). */
   allowWebdriver?: boolean;
+  /** Alleen tonen op deze hostnamen, zodat een devserver op localhost geen kaartje krijgt. */
+  hosts?: string[];
 }
 
 interface AudioFeedbackApi {
@@ -52,6 +54,7 @@ function fromScriptTag(): InitOptions {
   if (d.stripHash !== undefined) out.stripHash = flag(d.stripHash);
   if (d.minimized !== undefined) out.startMinimized = flag(d.minimized);
   if (d.allowWebdriver !== undefined) out.allowWebdriver = flag(d.allowWebdriver);
+  if (d.hosts) out.hosts = d.hosts.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
   if (d.context) {
     try {
       out.context = JSON.parse(d.context);
@@ -95,6 +98,7 @@ function init(options: InitOptions = {}): FeedbackWidget | null {
   const merged: InitOptions = { ...window.AudioFeedbackConfig, ...fromScriptTag(), ...options };
   // Geautomatiseerde tests en screenshots van de host-app laten we met rust.
   if (navigator.webdriver && !merged.allowWebdriver) return null;
+  if (merged.hosts?.length && !merged.hosts.includes(location.hostname.toLowerCase())) return null;
   instance?.destroy();
   merged.context = { ...merged.context, ...pendingContext };
   const start = () => (instance = new FeedbackWidget(resolveConfig(merged)));
