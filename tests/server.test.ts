@@ -313,16 +313,55 @@ describe('misbruik beperken', () => {
     });
   });
 
-  test('boven de opslaglimiet komt 507', async () => {
+  test('bij een volle opslag gaan de oudste opnames weg en blijft de nieuwe', async () => {
     await withApp({ maxStorageBytes: WEBM_HEAD.length * 2 }, async (b, own) => {
-      const first = meta();
-      assert.equal((await post(first, { to: b })).status, 201);
-      assert.equal((await post(meta(), { to: b })).status, 201);
+      const [a, bb, c] = [meta(), meta(), meta()];
+      for (const m of [a, bb, c]) {
+        assert.equal((await post(m, { to: b })).status, 201);
+        await new Promise((r) => setTimeout(r, 5)); // receivedAt is op de milliseconde
+      }
+      assert.equal(await own.get(a.id), null, 'de oudste is weg');
+      assert.ok(await own.get(bb.id));
+      assert.ok(await own.get(c.id));
       assert.equal(own.usedBytes, WEBM_HEAD.length * 2);
-      assert.equal((await post(meta(), { to: b })).status, 507);
-      // Verwijderen maakt weer ruimte.
-      assert.ok(await own.remove(first.id));
-      assert.equal((await post(meta(), { to: b })).status, 201);
+
+    });
+  });
+
+  test('twee uploads tegelijk nemen samen niet meer ruimte dan er is', async () => {
+    await withApp({}, async (b, own) => {
+      // Er is nog plek voor precies één. Zonder slot zien ze allebei die plek, en nemen ze samen te veel.
+      const max = WEBM_HEAD.length * 2;
+      await post(meta(), { to: b });
+      // Direct op de opslag: via HTTP komen ze zelden precies tegelijk aan.
+      const record = (await own.list())[0]!;
+      const fresh = [crypto.randomUUID(), crypto.randomUUID()];
+      await Promise.all(fresh.map((id) =>
+        own.saveWithin({ ...record, id, audioFile: `${id}.webm`, receivedAt: new Date().toISOString() }, WEBM_HEAD, max)));
+      assert.deepEqual((await own.list()).map((r) => r.id).sort(), [...fresh].sort());
+      assert.equal(own.usedBytes, max);
+    });
+  });
+
+  test('een opname groter dan de hele opslag geeft 507 en laat de rest staan', async () => {
+    await withApp({ maxStorageBytes: WEBM_HEAD.length + 4 }, async (b, own) => {
+      const kept = meta();
+      assert.equal((await post(kept, { to: b })).status, 201);
+      const big = new Uint8Array(WEBM_HEAD.length * 2);
+      big.set(WEBM_HEAD);
+      assert.equal((await post(meta(), { to: b, audio: big })).status, 507);
+      assert.ok(await own.get(kept.id));
+    });
+  });
+
+  test('tegelijk verwijderen telt een opname maar één keer af', async () => {
+    await withApp({}, async (b, own) => {
+      const m = meta();
+      await post(m, { to: b });
+      const before = own.usedBytes;
+      const results = await Promise.all([own.remove(m.id), own.remove(m.id)]);
+      assert.deepEqual(results.sort(), [false, true]);
+      assert.equal(own.usedBytes, before - WEBM_HEAD.length);
     });
   });
 

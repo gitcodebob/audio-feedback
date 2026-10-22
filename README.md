@@ -199,7 +199,7 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 | `DATA_DIR` | `./data` | opnames in `recordings/<id>.webm` en `<id>.json` |
 | `RETENTION_DAYS` | `90` | ouder wordt verwijderd. `0` bewaart alles |
 | `MAX_UPLOAD_MB` | `9.5` | onder de 10 MB van de host-Caddy |
-| `MAX_STORAGE_MB` | `2048` | alle opnames samen; daarboven geeft een upload 507. `0` is geen grens |
+| `MAX_STORAGE_MB` | `2048` | alle opnames samen. Past een nieuwe opname er niet meer bij, dan gaan de oudste weg: nieuwe feedback gaat voor. Let op: een vloed aan nep-uploads verdringt zo ook echte feedback. Hoe snel dat kan, bepalen de rate limits. `0` is geen grens |
 | `MAX_CONCURRENT_UPLOADS` | `4` | daarboven 503 met `Retry-After`; een upload staat even in het geheugen |
 | `RATE_LIMIT_PER_HOUR` | `60` | uploads per IP, en per /64 bij IPv6 |
 | `RATE_LIMIT_GLOBAL_PER_HOUR` | `600` | uploads van alle IP's samen |

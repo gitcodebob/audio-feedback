@@ -2,7 +2,7 @@
 // <id>.json met de metadata. De JSON wordt als laatste geschreven, dus zonder
 // JSON is een opname niet compleet en tellen we hem niet mee.
 
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RecordingMeta } from '../widget/src/types.ts';
 
@@ -19,6 +19,8 @@ const ID = /^[0-9a-f-]{36}$/;
 export class Storage {
   readonly dir: string;
   private used = 0;
+  /** Ruimte maken en opslaan gebeurt één upload tegelijk; anders rekenen twee uploads op dezelfde vrije ruimte. */
+  private quotaLock: Promise<unknown> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'recordings');
@@ -50,6 +52,27 @@ export class Storage {
     this.used += record.sizeBytes - (previous?.sizeBytes ?? 0);
   }
 
+  /**
+   * Slaat op binnen maxBytes (0 is geen grens). Past het niet, dan gaan eerst de oudste
+   * opnames weg: nieuwe feedback is meer waard dan feedback van maanden terug.
+   * Geeft terug hoeveel opnames er daarvoor zijn verwijderd.
+   */
+  saveWithin(record: StoredRecording, audio: Blob | Uint8Array, maxBytes: number): Promise<number> {
+    const run = this.quotaLock.then(async () => {
+      let removed = 0;
+      if (maxBytes > 0 && this.used + record.sizeBytes > maxBytes) {
+        for (const old of (await this.list()).reverse()) {
+          if (this.used + record.sizeBytes <= maxBytes) break;
+          if (await this.remove(old.id)) removed++;
+        }
+      }
+      await this.save(record, audio);
+      return removed;
+    });
+    this.quotaLock = run.catch(() => {});
+    return run;
+  }
+
   async get(id: string): Promise<StoredRecording | null> {
     if (!ID.test(id)) return null;
     try {
@@ -75,7 +98,13 @@ export class Storage {
   async remove(id: string): Promise<boolean> {
     const record = await this.get(id);
     if (!record) return false;
-    await rm(join(this.dir, `${id}.json`), { force: true });
+    // Wie de JSON weghaalt, heeft hem verwijderd. Doet de purge of /admin dat tegelijk, dan
+    // lukt dat maar één van beide, en telt usedBytes hem niet dubbel af.
+    try {
+      await unlink(join(this.dir, `${id}.json`));
+    } catch {
+      return false;
+    }
     await rm(join(this.dir, record.audioFile), { force: true });
     this.used -= record.sizeBytes;
     return true;
