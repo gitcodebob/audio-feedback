@@ -250,6 +250,11 @@ export function createApp(config: AppConfig) {
         if (path === '/widget.js.map') {
           return await serveFile(res, join(config.distDir, 'widget.js.map'), 'application/json', 'public, max-age=300');
         }
+        if (path === '/fonts/montserrat-latin-wght-normal.woff2') {
+          // Lettertypen laadt de browser altijd met CORS, ook vanaf een andere site.
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          return await serveFile(res, join(config.distDir, 'fonts', 'montserrat-latin-wght-normal.woff2'), 'font/woff2', 'public, max-age=31536000, immutable');
+        }
         if (path === '/health') return json(res, 200, { ok: true, version: config.version });
         if (path === '/' || path === '/demo' || path.startsWith('/demo/')) {
           return await serveFile(res, join(config.publicDir, 'demo.html'), 'text/html; charset=utf-8', 'no-cache');
@@ -265,7 +270,7 @@ export function createApp(config: AppConfig) {
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-store',
-            'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; media-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+            'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; media-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
             'Referrer-Policy': 'no-referrer',
           });
           return void res.end(html);

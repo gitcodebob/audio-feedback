@@ -17,6 +17,7 @@
     "check": "npm run typecheck && npm test && npm run test:e2e"
   },
   "devDependencies": {
+    "@fontsource-variable/montserrat": "^5.3.0",
     "@playwright/test": "^1.64.1",
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",

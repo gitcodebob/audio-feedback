@@ -72,32 +72,37 @@ export function renderAdmin(all: StoredRecording[], project: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ingesproken feedback</title>
 <style>
-  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1b1f24; }
+  @font-face { font-family: Montserrat; src: url(/fonts/montserrat-latin-wght-normal.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+  body { font: 14px/1.5 Montserrat, system-ui, sans-serif; margin: 0; background: #f6f8fa; color: #3c3c3c; }
+  .bar { background: #242f36; color: #fff; }
+  .bar div { max-width: 960px; margin: 0 auto; padding: 18px 16px; display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 18px; }
+  .bar div::before { content: ""; width: 5px; height: 22px; border-radius: 3px; background: #f8e800; }
+  a { color: #242f36; }
   main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { font-size: 20px; margin: 0 0 12px; }
-  nav a { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #fff; border: 1px solid #d8dde3; color: inherit; text-decoration: none; margin: 0 4px 4px 0; }
-  nav a.active { background: #1f5fbf; border-color: #1f5fbf; color: #fff; }
-  .rec { background: #fff; border: 1px solid #d8dde3; border-radius: 10px; padding: 14px; margin-top: 14px; display: grid; gap: 10px; }
+  nav a { display: inline-block; padding: 6px 16px; border-radius: 999px; background: #fff; color: inherit; text-decoration: none; margin: 0 4px 4px 0; font-weight: 500; box-shadow: 0 1px 2px #0000001a; }
+  nav a.active { background: #f8e800; color: #242f36; }
+  .rec { background: #fff; border-radius: 16px; padding: 18px; margin-top: 16px; display: grid; gap: 10px; box-shadow: 1px 10px 40px #0000001f; }
   .rec header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
   .spacer { flex: 1; }
   audio { width: 100%; }
   table { border-collapse: collapse; width: 100%; }
   td { padding: 3px 8px 3px 0; vertical-align: top; border-top: 1px solid #eef0f2; word-break: break-all; }
   td:first-child, td:nth-child(2) { white-space: nowrap; word-break: normal; width: 1%; }
-  .muted { color: #5b636e; }
+  .muted { color: #77818b; }
   .small { font-size: 12px; }
   .tag { display: inline-block; font-size: 12px; background: #eef0f2; border-radius: 4px; padding: 1px 6px; }
   .tag.warn { background: #fff1d6; }
   button { font: inherit; cursor: pointer; }
-  .seek { border: 0; background: #e8f0fc; color: #1f5fbf; border-radius: 4px; padding: 1px 6px; font-variant-numeric: tabular-nums; }
-  .delete { border: 1px solid #e3b4b2; background: #fff; color: #b3261e; border-radius: 6px; padding: 2px 8px; }
-  .empty { margin-top: 24px; color: #5b636e; }
+  .seek { border: 0; background: #f8e800; color: #242f36; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .delete { border: 0; background: #f6f8fa; color: #d0021b; border-radius: 999px; padding: 4px 12px; }
+  .delete:hover { background: #d0021b; color: #fff; }
+  .empty { margin-top: 24px; color: #77818b; }
 </style>
 <script src="/admin.js" defer></script>
 </head>
 <body>
+<header class="bar"><div>Ingesproken feedback</div></header>
 <main>
-  <h1>Ingesproken feedback</h1>
   <nav>${filters}</nav>
   ${shown.length ? shown.map(renderRecording).join('') : '<p class="empty">Nog geen opnames.</p>'}
 </main>
