@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json ./
-COPY scripts/build.ts scripts/widget-build-options.ts scripts/
+COPY scripts/build.ts scripts/
 COPY widget widget
 RUN node scripts/build.ts
 
@@ -17,8 +17,6 @@ WORKDIR /app
 COPY package.json ./
 COPY server server
 COPY public public
-# Vaste releases uit git, niet opnieuw gebouwd: apps rekenen op hun exacte hash.
-COPY releases releases
 COPY widget/src/types.ts widget/src/types.ts
 COPY --from=build /app/dist dist
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data

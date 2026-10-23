@@ -1,7 +1,5 @@
 // HTTP-laag zonder framework. Routes:
-//   GET  /widget-<versie>.js         een vaste release, voor apps (met integrity)
-//   GET  /widget-releases.json       versies en hun sha384
-//   GET  /widget.js                  de nieuwste build, voor de demo en ontwikkelen
+//   GET  /widget.js                  het script dat apps insluiten
 //   POST /api/recordings             upload (multipart: meta + audio), CORS per origin
 //   GET  /api/recordings             lijst              ┐
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
@@ -44,8 +42,6 @@ export interface AppConfig {
   demo: boolean;
   /** Map met widget.js en de statische bestanden. */
   distDir: string;
-  /** Map met de uitgebrachte widget-<versie>.js en integrity.json. */
-  releasesDir: string;
   publicDir: string;
   version: string;
   trustProxy: boolean;
@@ -176,7 +172,7 @@ export function createApp(config: AppConfig) {
     return false;
   }
 
-  async function serveFile(res: ServerResponse, path: string, type: string, cache: string, cors = false): Promise<void> {
+  async function serveFile(res: ServerResponse, path: string, type: string, cache: string): Promise<void> {
     let data: Buffer;
     try {
       data = await readFile(path);
@@ -189,8 +185,6 @@ export function createApp(config: AppConfig) {
       'Cache-Control': cache,
       // Ook te laden door apps die Cross-Origin-Embedder-Policy aanzetten.
       'Cross-Origin-Resource-Policy': 'cross-origin',
-      // integrity="…" werkt alleen met crossorigin="anonymous", en dat vraagt om CORS.
-      ...(cors ? { 'Access-Control-Allow-Origin': '*' } : {}),
     });
     res.end(data);
   }
@@ -322,14 +316,6 @@ export function createApp(config: AppConfig) {
       }
 
       if (method === 'GET' || method === 'HEAD') {
-        const release = /^\/widget-(\d+\.\d+\.\d+)\.js$/.exec(path);
-        if (release) {
-          // Verandert nooit: een nieuwe versie krijgt een nieuwe naam (scripts/release.ts).
-          return await serveFile(res, join(config.releasesDir, `widget-${release[1]}.js`), 'text/javascript; charset=utf-8', 'public, max-age=31536000, immutable', true);
-        }
-        if (path === '/widget-releases.json') {
-          return await serveFile(res, join(config.releasesDir, 'integrity.json'), 'application/json; charset=utf-8', 'no-cache', true);
-        }
         if (path === '/widget.js') {
           return await serveFile(res, join(config.distDir, 'widget.js'), 'text/javascript; charset=utf-8', 'public, max-age=300');
         }

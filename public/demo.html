@@ -42,12 +42,8 @@
     document.getElementById('page-title').textContent = a.textContent;
     document.title = a.textContent + ' · demo';
   });
-  // De nieuwste vaste release, met de hash erbij: dan voert de browser alleen precies dat bestand uit.
-  fetch('/widget-releases.json').then((r) => r.json()).then((releases) => {
-    const [version, integrity] = Object.entries(releases).at(-1);
-    document.getElementById('snippet').textContent =
-      `<script src="${location.origin}/widget-${version}.js"\n  integrity="${integrity}" crossorigin="anonymous"\n  data-project="mijn-app" defer><\/script>`;
-  });
+  document.getElementById('snippet').textContent =
+    `<script src="${location.origin}/widget.js" data-project="mijn-app" defer><\/script>`;
 </script>
 <script src="/widget.js" data-project="demo" data-context='{"omgeving":"demo"}' defer></script>
 </body>

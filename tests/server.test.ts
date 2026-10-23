@@ -1,8 +1,7 @@
 import { after, before, describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request, type Server } from 'node:http';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp, originAllowed, rateKey, type AppConfig } from '../server/app.ts';
@@ -65,7 +64,6 @@ function config(storage: Storage, overrides: Partial<AppConfig> = {}): AppConfig
     retentionDays: 90,
     demo: false,
     distDir: join(root, 'dist'),
-    releasesDir: join(root, 'releases'),
     publicDir: join(root, 'public'),
     version: 'test',
     trustProxy: false,
@@ -243,42 +241,6 @@ describe('upload', () => {
     const stored = await storage.get(m.id);
     assert.deepEqual(stored!.timeline, [{ at: 0, type: 'start' }]);
     assert.deepEqual(stored!.context, { ok: 'ja' });
-  });
-});
-
-describe('releases', () => {
-  const releasesDir = join(root, 'releases');
-  const sha384 = (data: Uint8Array) => `sha384-${createHash('sha384').update(data).digest('base64')}`;
-
-  test('integrity.json klopt met de bestanden, en elke release staat erin', async () => {
-    const manifest = JSON.parse(await readFile(join(releasesDir, 'integrity.json'), 'utf8')) as Record<string, string>;
-    const files = (await readdir(releasesDir)).filter((f) => f.endsWith('.js')).sort();
-    assert.deepEqual(files, Object.keys(manifest).map((v) => `widget-${v}.js`).sort());
-    for (const [version, integrity] of Object.entries(manifest)) {
-      assert.equal(sha384(await readFile(join(releasesDir, `widget-${version}.js`))), integrity, version);
-    }
-  });
-
-  test('de versie in package.json is die van de widget', async () => {
-    const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { version: string };
-    const widget = await readFile(join(root, 'widget/src/widget.ts'), 'utf8');
-    assert.match(widget, new RegExp(`export const VERSION = '${version.replaceAll('.', '\\.')}'`));
-  });
-
-  test('een release komt met CORS, een vaste cache en de juiste inhoud', async () => {
-    const manifest = JSON.parse(await readFile(join(releasesDir, 'integrity.json'), 'utf8')) as Record<string, string>;
-    const [version, integrity] = Object.entries(manifest).at(-1)!;
-    const res = await fetch(`${base}/widget-${version}.js`);
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get('access-control-allow-origin'), '*');
-    assert.match(res.headers.get('cache-control') ?? '', /immutable/);
-    assert.equal(sha384(new Uint8Array(await res.arrayBuffer())), integrity);
-    assert.deepEqual(await (await fetch(`${base}/widget-releases.json`)).json(), manifest);
-  });
-
-  test('een onbekende versie geeft 404', async () => {
-    assert.equal((await fetch(`${base}/widget-9.9.9.js`)).status, 404);
-    assert.equal((await fetch(`${base}/widget-..%2Fpackage.json.js`)).status, 404);
   });
 });
 
