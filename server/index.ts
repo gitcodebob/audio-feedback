@@ -34,7 +34,6 @@ const app = createApp({
   retentionDays: retentionDays > 0 ? retentionDays : 0,
   demo: env.DEMO !== 'false',
   distDir: join(root, 'dist'),
-  releasesDir: join(root, 'releases'),
   publicDir: join(root, 'public'),
   version: env.APP_VERSION ?? pkg.version,
   trustProxy: env.TRUST_PROXY !== 'false',

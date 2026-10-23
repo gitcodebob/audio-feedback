@@ -1,7 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 // Een nep-hostapp op http://localhost:<poort+1>/host/... sluit de widget in van de
 // feedbackserver op 127.0.0.1:<poort>. De fake-device-vlaggen van Chromium leveren
@@ -27,7 +25,7 @@ interface Recording {
   timeline: { at: number; type: string; url?: string }[];
 }
 
-function hostPage(attrs = '', src = `${SERVER}/widget.js`): string {
+function hostPage(attrs = ''): string {
   return `<!doctype html><html lang="nl"><head><title>Host-app</title></head><body>
     <h1>Host-app</h1>
     <button id="spa">Naar instellingen</button>
@@ -38,18 +36,17 @@ function hostPage(attrs = '', src = `${SERVER}/widget.js`): string {
       document.addEventListener('click', () => window.appClicks++);
       document.getElementById('spa').onclick = () => history.pushState({}, '', '/host/instellingen?tab=profiel');
     </script>
-    <script src="${src}" data-project="e2e" ${attrs.includes('data-allow-webdriver') ? '' : 'data-allow-webdriver'} data-context='{"omgeving":"test"}' ${attrs} defer></script>
+    <script src="${SERVER}/widget.js" data-project="e2e" ${attrs.includes('data-allow-webdriver') ? '' : 'data-allow-webdriver'} data-context='{"omgeving":"test"}' ${attrs} defer></script>
   </body></html>`;
 }
 
 let hostAttrs = '';
-let hostSrc: string | undefined;
 let hostServer: Server;
 
 test.beforeAll(async () => {
   hostServer = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(hostPage(hostAttrs, hostSrc));
+    res.end(hostPage(hostAttrs));
   });
   await new Promise<void>((resolve) => hostServer.listen(HOST_PORT, '127.0.0.1', resolve));
 });
@@ -58,9 +55,8 @@ test.afterAll(() => {
   hostServer.close();
 });
 
-function serveHost(attrs = '', src?: string): void {
+function serveHost(attrs = ''): void {
   hostAttrs = attrs;
-  hostSrc = src;
 }
 
 async function recordings(page: Page, project = 'e2e'): Promise<Recording[]> {
@@ -198,24 +194,6 @@ test('een opname die niet verstuurd is, verdwijnt na een dag uit de browser', as
   await page.waitForTimeout(3500);
   await expect(widget(page).getByText('Er staat nog een opname klaar')).toHaveCount(0);
   await expect(button(page, 'Opnemen')).toBeVisible();
-});
-
-test('een vaste release laadt met integrity, en een gewijzigd bestand niet', async ({ page }) => {
-  const releases = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'releases', 'integrity.json'), 'utf8')) as Record<string, string>;
-  const [version, integrity] = Object.entries(releases).at(-1)!;
-  serveHost(`integrity="${integrity}" crossorigin="anonymous"`, `${SERVER}/widget-${version}.js`);
-  await page.goto('/host/start');
-  await expect(button(page, 'Opnemen')).toBeVisible();
-
-  // Zo ziet de browser een bestand dat iemand op de server heeft aangepast.
-  const blocked: string[] = [];
-  page.on('console', (m) => m.type() === 'error' && blocked.push(m.text()));
-  serveHost(`integrity="sha384-${'A'.repeat(64)}" crossorigin="anonymous"`, `${SERVER}/widget-${version}.js`);
-  await page.goto('/host/start');
-  await page.waitForTimeout(1000);
-  await expect(widget(page)).toHaveCount(0);
-  expect(await page.evaluate(() => 'AudioFeedback' in window)).toBe(false);
-  expect(blocked.join('\n')).toMatch(/integrity/i);
 });
 
 test('toetsen en klikken op het kaartje lekken niet naar de app', async ({ page }) => {

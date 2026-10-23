@@ -5,13 +5,10 @@ hoek neemt audio op (met pauzeren en hervatten) en stuurt die naar onze server, 
 adres van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 
 ```html
-<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget-0.2.0.js"
-  integrity="sha384-fCLzESZo1gdmIlEW3vJYjFrM3SQxy3rVq150kyfGbaesVR5MlPf7BGRnFi1gt1I2" crossorigin="anonymous"
-  data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
+<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
 ```
 
-Meer is er niet nodig om het in een app te zetten. De `integrity` zorgt dat de browser alleen
-precies dat bestand uitvoert (zie [Releases](#releases)). De widget heeft geen afhankelijkheden, is
+Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
 31 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
 
 ## Voorstel
@@ -110,9 +107,7 @@ Per app, om op te letten:
 
 ```html
 <script
-  src="https://audio-feedback.hetzner.bobreijnders.nl/widget-0.2.0.js"
-  integrity="sha384-fCLzESZo1gdmIlEW3vJYjFrM3SQxy3rVq150kyfGbaesVR5MlPf7BGRnFi1gt1I2"
-  crossorigin="anonymous"
+  src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js"
   data-project="meterkast"
   data-position="bottom-right"
   data-strip-hash="false"
@@ -149,38 +144,13 @@ AudioFeedback.init({ project: 'x', position: 'top-left' }); // met data-manual
 
 Instellingen kunnen ook in `window.AudioFeedbackConfig = {...}` vóór het script.
 
-### Releases
-
-De widget draait met alle rechten in de app die hem laadt. Wie `widget.js` op de server kan
-aanpassen, zou dus in elke app kunnen meekijken. Daarom laden apps een **vaste release**:
-`widget-<versie>.js` verandert nooit, en de scripttag draagt de sha384-hash van dat bestand. Een
-aangepast bestand voert de browser niet uit. De widget blijft dan weg, met een melding in de
-console.
-
-- **Uitbrengen:** verhoog de versie in `package.json` en in `VERSION` in `widget/src/widget.ts`,
-  draai `npm run release`, commit `releases/` en rol uit. Het script drukt de nieuwe scripttag
-  af. Het weigert een bestaande versie met andere inhoud te overschrijven.
-- **Bijwerken:** daarna zet elke app zelf de nieuwe tag erin. Tot die tijd blijft hij gewoon
-  de oude versie laden: oude releases staan in git en blijven bestaan.
-- **Wat waar staat:** `releases/integrity.json` (ook op `/widget-releases.json`) bevat alle
-  versies met hun hash. De tests controleren dat die klopt met de bestanden.
-- **`/widget.js`:** is altijd de nieuwste build, voor de demo en lokaal ontwikkelen. Gebruik
-  hem niet in apps.
-
-Krijgt een app ooit een Content-Security-Policy, dan zijn nodig: `script-src` en `connect-src`
-voor de server, en `media-src blob:` voor het terugluisteren. Een `Permissions-Policy` moet
-`microphone=(self)` toelaten. In een iframe is `allow="microphone"` nodig. Opnemen kan alleen
-via https of op localhost.
-
 ## Server
 
 Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type stripping).
 
 | Route | |
 |---|---|
-| `GET /widget-<versie>.js` | een vaste release, voor apps. `immutable`, met CORS voor `integrity` |
-| `GET /widget-releases.json` | alle releases met hun sha384 |
-| `GET /widget.js` | de nieuwste build, voor de demo en ontwikkelen |
+| `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
 | `GET /admin` | beheerpagina: luisteren, per pagina naar de tijd springen, filteren per project, downloaden, verwijderen |
 | `GET /api/recordings[?project=]` | lijst als JSON |
@@ -243,12 +213,10 @@ run_app(project_dir="/home/botrey/projects/audio-feedback", app="audio-feedback"
 ```
 
 Verifiëren: de live `widget.js` hoort byte-gelijk te zijn aan een verse lokale build
-(esbuild is deterministisch), en de live release aan zijn hash in `releases/integrity.json`.
+(esbuild is deterministisch).
 
 ```bash
 npm run build && curl -fsS https://audio-feedback.hetzner.bobreijnders.nl/widget.js | cmp - dist/widget.js && echo live == build
-v=$(node -p 'require("./package.json").version')
-[ "sha384-$(curl -fsS https://audio-feedback.hetzner.bobreijnders.nl/widget-$v.js | openssl dgst -sha384 -binary | base64)" = "$(node -p "require('./releases/integrity.json')['$v']")" ] && echo release $v klopt
 ```
 
 Een nieuwe app laten insturen: voeg `<origin>=<project>` toe aan `ALLOWED_ORIGINS` in

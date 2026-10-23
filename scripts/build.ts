@@ -1,17 +1,19 @@
 // Bouwt widget/src naar één zelfstandig bestand, dist/widget.js, dat elke app
 // met een gewone scripttag kan laden: IIFE, geen afhankelijkheden, geen CSS-bestand.
-// Apps laden niet dit bestand maar een vaste release; zie release.ts.
 import * as esbuild from 'esbuild';
 import { copyFileSync, mkdirSync } from 'node:fs';
-import { widgetBuildOptions } from './widget-build-options.ts';
 
 const watch = process.argv.includes('--watch');
 
 const options: esbuild.BuildOptions = {
-  ...widgetBuildOptions,
+  entryPoints: ['widget/src/index.ts'],
   outfile: 'dist/widget.js',
+  bundle: true,
+  format: 'iife',
+  target: ['es2020', 'safari15', 'firefox100', 'chrome100'],
   minify: !watch,
   sourcemap: true,
+  legalComments: 'none',
   logLevel: 'info',
 };
 
