@@ -4,7 +4,8 @@ import { createServer, request, type Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createApp, originAllowed, rateKey, type AppConfig } from '../server/app.ts';
+import { createApp, rateKey, type AppConfig } from '../server/app.ts';
+import { SiteStore } from '../server/sites.ts';
 import { Storage } from '../server/storage.ts';
 
 const WEBM_HEAD = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81]);
@@ -15,6 +16,9 @@ let server: Server;
 let base: string;
 let dataDir: string;
 let storage: Storage;
+let sites: SiteStore;
+
+const SEED = [ORIGIN, 'https://*.example.nl', 'https://gebonden.example.org=alleen-dit|of-dit'];
 
 function meta(overrides: Record<string, unknown> = {}) {
   return {
@@ -51,10 +55,10 @@ function post(
 
 const root = resolve(import.meta.dirname, '..');
 
-function config(storage: Storage, overrides: Partial<AppConfig> = {}): AppConfig {
+function config(storage: Storage, sites: SiteStore, overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     storage,
-    allowedOrigins: [ORIGIN, 'https://*.example.nl', 'https://gebonden.example.org=alleen-dit|of-dit'],
+    sites,
     adminPassword: 'geheim',
     maxUploadBytes: 64 * 1024,
     maxStorageBytes: 0,
@@ -79,13 +83,18 @@ async function listen(app: ReturnType<typeof createApp>): Promise<{ server: Serv
 }
 
 /** Een eigen server met eigen opslag, voor instellingen die de andere tests in de weg zitten. */
-async function withApp(overrides: Partial<AppConfig>, fn: (base: string, storage: Storage) => Promise<void>): Promise<void> {
+async function withApp(
+  overrides: Partial<AppConfig>,
+  fn: (base: string, storage: Storage, sites: SiteStore) => Promise<void>,
+): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'audio-feedback-'));
   const own = new Storage(dir);
   await own.init();
-  const { server, base } = await listen(createApp(config(own, overrides)));
+  const ownSites = new SiteStore(join(dir, 'sites.json'));
+  await ownSites.init(SEED);
+  const { server, base } = await listen(createApp(config(own, ownSites, overrides)));
   try {
-    await fn(base, own);
+    await fn(base, own, ownSites);
   } finally {
     server.closeAllConnections();
     server.close();
@@ -97,32 +106,14 @@ before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'audio-feedback-'));
   storage = new Storage(dataDir);
   await storage.init();
-  ({ server, base } = await listen(createApp(config(storage))));
+  sites = new SiteStore(join(dataDir, 'sites.json'));
+  await sites.init(SEED);
+  ({ server, base } = await listen(createApp(config(storage, sites))));
 });
 
 after(async () => {
   server.close();
   await rm(dataDir, { recursive: true, force: true });
-});
-
-describe('originAllowed', () => {
-  test('exact en wildcard-subdomein', () => {
-    assert.ok(originAllowed(ORIGIN, [ORIGIN]));
-    assert.ok(originAllowed('https://app.example.nl', ['https://*.example.nl']));
-    assert.ok(!originAllowed('https://example.nl', ['https://*.example.nl']));
-    assert.ok(!originAllowed('https://evil-example.nl', ['https://*.example.nl']));
-    assert.ok(!originAllowed('http://app.example.nl', ['https://*.example.nl']));
-    assert.ok(originAllowed('https://wat.dan.ook', ['*']));
-  });
-
-  test('met =project mag een origin alleen onder die projecten insturen', () => {
-    const rules = ['https://a.example.nl=a|a-test', 'https://*.example.org'];
-    assert.ok(originAllowed('https://a.example.nl', rules));
-    assert.ok(originAllowed('https://a.example.nl', rules, 'a'));
-    assert.ok(originAllowed('https://a.example.nl', rules, 'a-test'));
-    assert.ok(!originAllowed('https://a.example.nl', rules, 'b'));
-    assert.ok(originAllowed('https://x.example.org', rules, 'wat-dan-ook'));
-  });
 });
 
 describe('rateKey', () => {
@@ -137,7 +128,7 @@ describe('rateKey', () => {
 });
 
 describe('upload', () => {
-  test('slaat audio en metadata op, met de URL en tijdlijn', async () => {
+  test('slaat audio en metadata op, met de URL (standaard alleen het pad) en tijdlijn', async () => {
     const m = meta();
     const res = await post(m);
     assert.equal(res.status, 201);
@@ -146,9 +137,10 @@ describe('upload', () => {
     assert.deepEqual(await res.json(), { id: m.id, retentionDays: 90 });
     const stored = await storage.get(m.id);
     assert.ok(stored);
-    assert.equal(stored.url, `${ORIGIN}/editor#3`);
+    // De site staat op de standaard: de server haalt de hash weg, ook al stuurde de widget hem mee.
+    assert.equal(stored.url, `${ORIGIN}/editor`);
     assert.equal(stored.timeline.length, 3);
-    assert.equal(stored.timeline[1]!.url, `${ORIGIN}/editor#4`);
+    assert.equal(stored.timeline[1]!.url, `${ORIGIN}/editor`);
     assert.equal(stored.origin, ORIGIN);
     assert.equal(stored.audioFile, `${m.id}.webm`);
     assert.deepEqual(stored.context, { versie: '1.2' });
@@ -241,6 +233,94 @@ describe('upload', () => {
     const stored = await storage.get(m.id);
     assert.deepEqual(stored!.timeline, [{ at: 0, type: 'start' }]);
     assert.deepEqual(stored!.context, { ok: 'ja' });
+  });
+});
+
+describe('sites', () => {
+  const NEW = 'https://nieuw.example.com';
+  const json = (body: unknown, extra: Record<string, string> = {}) =>
+    ({ headers: { ...AUTH, 'content-type': 'application/json', ...extra }, body: JSON.stringify(body) });
+  const config = (origin: string) => fetch(`${base}/api/sites/config`, { headers: { origin } });
+
+  test('beheer vraagt om het wachtwoord', async () => {
+    assert.equal((await fetch(`${base}/api/sites`)).status, 401);
+    assert.equal((await fetch(`${base}/admin/sites`)).status, 401);
+    assert.equal((await fetch(`${base}/api/sites`, { method: 'POST', ...json({ origin: NEW }), headers: { 'content-type': 'application/json' } })).status, 401);
+  });
+
+  test('de lijst begint met ALLOWED_ORIGINS, op de strenge standaard', async () => {
+    const { sites: list } = (await (await fetch(`${base}/api/sites`, { headers: AUTH })).json()) as { sites: { origin: string; projects: string[]; stripQuery: boolean; stripHash: boolean }[] };
+    const bound = list.find((s) => s.origin === 'https://gebonden.example.org')!;
+    assert.deepEqual(bound.projects, ['alleen-dit', 'of-dit']);
+    assert.equal(bound.stripQuery, true);
+    assert.equal(bound.stripHash, true);
+  });
+
+  test('alleen JSON, en alleen vanaf de eigen origin', async () => {
+    const form = await fetch(`${base}/api/sites`, { method: 'POST', headers: { ...AUTH, 'content-type': 'application/x-www-form-urlencoded' }, body: `origin=${NEW}` });
+    assert.equal(form.status, 415);
+    const crossSite = await fetch(`${base}/api/sites`, { method: 'POST', ...json({ origin: NEW }, { origin: 'https://evil.example.com' }) });
+    assert.equal(crossSite.status, 403);
+    assert.ok(!sites.match(NEW));
+  });
+
+  test('toevoegen, instellen, gebruiken en verwijderen', async () => {
+    // Nog niet op de lijst: geen instellingen en geen upload.
+    assert.equal((await config(NEW)).status, 403);
+    assert.equal((await post(meta({ url: `${NEW}/x` }), { origin: NEW })).status, 403);
+
+    const created = await fetch(`${base}/api/sites`, { method: 'POST', ...json({ origin: `${NEW}/een/pagina`, projects: 'nieuw' }) });
+    assert.equal(created.status, 201);
+    const site = (await created.json()) as { id: string; origin: string };
+    assert.equal(site.origin, NEW, 'een geplakt adres wordt een origin');
+    assert.equal((await fetch(`${base}/api/sites`, { method: 'POST', ...json({ origin: NEW }) })).status, 409);
+
+    const put = await fetch(`${base}/api/sites/${site.id}`, {
+      method: 'PUT', ...json({ origin: NEW, projects: ['nieuw'], stripQuery: true, keepParams: ['tab'], stripHash: false }),
+    });
+    assert.equal(put.status, 200);
+
+    // De widget krijgt de nieuwe instellingen meteen.
+    const res = await config(NEW);
+    assert.equal(res.headers.get('access-control-allow-origin'), NEW);
+    assert.deepEqual(await res.json(), { stripQuery: true, stripHash: false, keepParams: ['tab'] });
+
+    // En de server houdt zich er bij een upload zelf ook aan.
+    const m = meta({ project: 'nieuw', url: `${NEW}/x?tab=2&token=geheim#/route`, timeline: [{ at: 0, type: 'start', url: `${NEW}/x?token=geheim` }] });
+    assert.equal((await post(m, { origin: NEW })).status, 201);
+    const stored = (await storage.get(m.id))!;
+    assert.equal(stored.url, `${NEW}/x?tab=2#/route`);
+    assert.equal(stored.timeline[0]!.url, `${NEW}/x`);
+    assert.equal((await post(meta({ project: 'ander', url: `${NEW}/x` }), { origin: NEW })).status, 403);
+
+    assert.equal((await fetch(`${base}/api/sites/${site.id}`, { method: 'DELETE', headers: AUTH })).status, 200);
+    assert.equal((await config(NEW)).status, 403);
+    assert.equal((await post(meta({ project: 'nieuw', url: `${NEW}/x` }), { origin: NEW })).status, 403);
+  });
+
+  test('ongeldige invoer geeft 400 met een leesbare reden', async () => {
+    for (const body of [{ origin: 'geen website' }, { origin: 'https://*.nl' }, { origin: NEW, projects: 'met spatie' }, { origin: NEW, keepParams: ['a=b'] }]) {
+      const res = await fetch(`${base}/api/sites`, { method: 'POST', ...json(body) });
+      assert.equal(res.status, 400, JSON.stringify(body));
+      assert.ok(((await res.json()) as { error: string }).error.length > 5);
+    }
+  });
+
+  test('de demopagina krijgt de strenge standaard', async () => {
+    await withApp({ demo: true }, async (b) => {
+      const res = await fetch(`${b}/api/sites/config`, { headers: { origin: new URL(b).origin } });
+      assert.deepEqual(await res.json(), { stripQuery: true, stripHash: true, keepParams: [] });
+    });
+  });
+
+  test('de beheerpagina escapet en toont een scripttag met het publieke adres', async () => {
+    await withApp({ trustProxy: true }, async (b, _storage, own) => {
+      await own.create({ origin: 'https://*.escape.example.nl', projects: ['x'], stripQuery: true, stripHash: true, keepParams: ['"><b>'] });
+      const html = await (await fetch(`${b}/admin/sites`, { headers: { ...AUTH, 'x-forwarded-proto': 'https' } })).text();
+      assert.ok(!html.includes('"><b>'));
+      // Achter Caddy: https uit X-Forwarded-Proto, en de host waarop de beheerder de pagina opende.
+      assert.ok(html.includes(`&#60;script src=&#34;https://${new URL(b).host}/widget.js&#34; data-project=&#34;x&#34; defer&#62;`));
+    });
   });
 });
 

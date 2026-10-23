@@ -1,3 +1,4 @@
+import { STRICT_URL_OPTIONS, type UrlOptions } from './clean-url.ts';
 import type { RecordingMeta } from './types.ts';
 
 export class UploadError extends Error {
@@ -18,6 +19,25 @@ function extensionFor(mimeType: string): string {
 export interface UploadReceipt {
   /** Hoe lang de server de opname bewaart; 0 als hij niets weggooit, undefined bij een oude server. */
   retentionDays?: number;
+}
+
+function names(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+/**
+ * Wat er van de URL mee mag, zoals ingesteld in /admin/sites. Gevraagd bij Opnemen, dus een
+ * wijziging in beheer geldt meteen. Lukt het niet, dan gaat alleen het pad mee.
+ */
+export async function siteUrlOptions(endpoint: string): Promise<UrlOptions> {
+  try {
+    const res = await fetch(`${endpoint}/api/sites/config`, { credentials: 'omit', mode: 'cors', signal: AbortSignal.timeout(3_000) });
+    if (!res.ok) return STRICT_URL_OPTIONS;
+    const body = (await res.json()) as Record<string, unknown>;
+    return { stripQuery: body.stripQuery !== false, stripHash: body.stripHash !== false, keepParams: names(body.keepParams) };
+  } catch {
+    return STRICT_URL_OPTIONS;
+  }
 }
 
 /** Een multipart POST zonder eigen headers is een "simple request": geen CORS-preflight nodig. */

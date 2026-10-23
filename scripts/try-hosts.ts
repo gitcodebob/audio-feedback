@@ -29,8 +29,8 @@ interface Host {
   ready?: (page: Page) => Promise<void>;
   /** Doen alsof er een mens achter zit: het spel slaat anders zijn startscherm over. */
   hideWebdriver?: boolean;
-  /** Wat de app op de scripttag zou zetten, zodat de navigatie van de app in de tijdlijn komt. */
-  config?: { keepParams?: string[]; stripHash?: boolean };
+  /** Wat er in /admin/sites voor deze app hoort te staan, zodat de navigatie van de app in de tijdlijn komt. */
+  site?: { keepParams?: string[]; stripHash?: boolean };
 }
 
 const hosts: Host[] = [
@@ -38,7 +38,7 @@ const hosts: Host[] = [
     name: 'defend-greenland',
     url: process.env.WOF_URL ?? 'https://defend-greenland.hetzner.bobreijnders.nl/?quality=low',
     hideWebdriver: true,
-    config: { keepParams: ['quality'], stripHash: false },
+    site: { keepParams: ['quality'], stripHash: false },
     ready: async (page) => {
       await page.waitForFunction(() => document.getElementById('ranglijst')?.checkVisibility(), null, { timeout: 30_000 });
     },
@@ -56,7 +56,7 @@ const hosts: Host[] = [
   {
     name: 'elektra-ontwerper',
     url: process.env.ELEKTRA_URL ?? 'https://elektra-ontwerper.hetzner.bobreijnders.nl/',
-    config: { keepParams: ['proef'] },
+    site: { keepParams: ['proef'] },
     navigate: async (page) => {
       await page.evaluate(() => history.replaceState(null, '', '?proef=1'));
     },
@@ -64,7 +64,7 @@ const hosts: Host[] = [
   {
     name: 'meterkast',
     url: process.env.METERKAST_URL ?? 'http://localhost:8792/',
-    config: { stripHash: false },
+    site: { stripHash: false },
     setup: async (page) => {
       await page.getByLabel('Wachtwoord').fill(process.env.METERKAST_PASSWORD ?? 'proefwachtwoord');
       await page.getByRole('button', { name: 'Inloggen' }).click();
@@ -95,7 +95,19 @@ function launchEnv(): Record<string, string> {
   return env;
 }
 
+/** Zet de app op de feedbackserver in de sitelijst, met de instellingen die erbij horen. */
+async function ensureSite(host: Host): Promise<void> {
+  const origin = new URL(host.url).origin;
+  const headers = { authorization: AUTH, 'content-type': 'application/json' };
+  const { sites } = (await (await fetch(`${SERVER}/api/sites`, { headers })).json()) as { sites: { id: string; origin: string }[] };
+  const existing = sites.find((s) => s.origin === origin);
+  const body = JSON.stringify({ origin, projects: [host.name], stripQuery: true, stripHash: true, keepParams: [], ...host.site });
+  const res = await fetch(existing ? `${SERVER}/api/sites/${existing.id}` : `${SERVER}/api/sites`, { method: existing ? 'PUT' : 'POST', headers, body });
+  if (!res.ok) throw new Error(`site ${origin} instellen lukte niet: ${res.status} ${await res.text()}`);
+}
+
 async function tryHost(host: Host): Promise<boolean> {
+  await ensureSite(host);
   const browser = await chromium.launch({
     env: launchEnv(),
     args: [
@@ -119,8 +131,8 @@ async function tryHost(host: Host): Promise<boolean> {
   }
   // SwiftShader rendert WebGL in software; een schermafdruk van het spel duurt dan lang.
   const shot = (file: string) => page.screenshot({ path: join(OUT, `${host.name}-${file}.png`), timeout: 120_000 });
-  await page.addInitScript(({ server, project, config }) => {
-    (window as unknown as { AudioFeedbackConfig: object }).AudioFeedbackConfig = { ...config, allowWebdriver: true, project };
+  await page.addInitScript(({ server, project }) => {
+    (window as unknown as { AudioFeedbackConfig: object }).AudioFeedbackConfig = { allowWebdriver: true, project };
     // Luistert waar de apps zelf luisteren (window, bubbelfase): wat hier aankomt, zou de app ook zien.
     window.addEventListener('keydown', (e) => (window as unknown as { __proefKey: (k: string) => void }).__proefKey(e.key));
     document.addEventListener('DOMContentLoaded', () => {
@@ -128,7 +140,7 @@ async function tryHost(host: Host): Promise<boolean> {
       s.src = `${server}/widget.js`;
       document.body.appendChild(s);
     });
-  }, { server: SERVER, project: host.name, config: host.config ?? {} });
+  }, { server: SERVER, project: host.name });
 
   const ok = (cond: boolean, msg: string) => {
     console.log(`  ${cond ? '✔' : '✘'} ${msg}`);

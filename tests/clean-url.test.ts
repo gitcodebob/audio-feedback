@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanUrl } from '../widget/src/page-tracker.ts';
+import { cleanUrl, STRICT_URL_OPTIONS } from '../widget/src/clean-url.ts';
 
 const URL_WITH_SECRETS = 'https://app.example.nl/dossier/12?tab=notities&token=geheim#access_token=abc';
 
@@ -22,5 +22,11 @@ describe('cleanUrl', () => {
 
   test('een ongeldige URL gaat niet mee', () => {
     assert.equal(cleanUrl('geen url', { stripQuery: true, stripHash: true, keepParams: [] }), '');
+  });
+});
+
+describe('STRICT_URL_OPTIONS', () => {
+  test('houdt alleen het pad over', () => {
+    assert.equal(cleanUrl(URL_WITH_SECRETS, STRICT_URL_OPTIONS), 'https://app.example.nl/dossier/12');
   });
 });
