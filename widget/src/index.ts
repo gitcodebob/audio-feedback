@@ -53,9 +53,6 @@ function fromScriptTag(): InitOptions {
   if (d.project) out.project = d.project;
   if (d.position && (CORNERS as string[]).includes(d.position)) out.position = d.position as Corner;
   if (d.maxDuration) out.maxDurationSec = Number(d.maxDuration);
-  if (d.stripQuery !== undefined) out.stripQuery = flag(d.stripQuery);
-  if (d.stripHash !== undefined) out.stripHash = flag(d.stripHash);
-  if (d.keepParams) out.keepParams = d.keepParams.split(',').map((p) => p.trim()).filter(Boolean);
   if (d.privacyUrl) out.privacyUrl = d.privacyUrl;
   if (d.minimized !== undefined) out.startMinimized = flag(d.minimized);
   if (d.allowWebdriver !== undefined) out.allowWebdriver = flag(d.allowWebdriver);
@@ -100,10 +97,6 @@ function resolveConfig(options: InitOptions): WidgetConfig {
     project: options.project || location.hostname || 'onbekend',
     position: options.position ?? 'bottom-right',
     maxDurationSec: Number.isFinite(max) && max > 0 ? Math.min(max, MAX_DURATION_CAP_SEC) : 10 * 60,
-    // Standaard alleen het pad: in query en hash staan vaak tokens, zoektermen of ids.
-    stripQuery: options.stripQuery ?? true,
-    stripHash: options.stripHash ?? true,
-    keepParams: (options.keepParams ?? []).map(String),
     privacyUrl: httpUrl(options.privacyUrl),
     startMinimized: options.startMinimized ?? false,
     context,

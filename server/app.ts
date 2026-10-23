@@ -4,7 +4,13 @@
 //   GET  /api/recordings             lijst              ┐
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
 //   DELETE /api/recordings/:id       verwijderen        │
-//   GET  /admin                      luisterpagina      ┘
+//   GET  /admin                      luisterpagina      │
+//   GET  /admin/sites                sitebeheer         │
+//   GET  /api/sites                  sites als JSON     │
+//   POST /api/sites                  site toevoegen     │
+//   PUT  /api/sites/:id              site wijzigen      │
+//   DELETE /api/sites/:id            site verwijderen   ┘
+//   GET  /api/sites/config           URL-instellingen van de site die het vraagt (voor de widget)
 //   GET  /                           demopagina (alleen met DEMO aan)
 //   GET  /health
 
@@ -15,17 +21,16 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
-import { renderAdmin } from './admin.ts';
+import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
+import { renderAdmin, renderSites } from './admin.ts';
+import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
 import { AUDIO_TYPES, baseAudioType, parseMeta, sniffAudio, ValidationError } from './validate.ts';
 
 export interface AppConfig {
   storage: Storage;
-  /**
-   * Exacte origins, of met een wildcard-subdomein: https://*.example.nl. "*" staat alles toe.
-   * Met "=project" erachter (of "=a|b") mag die origin alleen onder die projecten insturen.
-   */
-  allowedOrigins: string[];
+  /** Welke sites mogen insturen, en wat er per site van de URL bewaard blijft. */
+  sites: SiteStore;
   adminPassword: string;
   maxUploadBytes: number;
   /** Bovengrens voor alle opnames samen op schijf; daarboven gaan de oudste weg. 0 is geen grens. */
@@ -63,22 +68,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
     'Cache-Control': 'no-store',
   });
   res.end(data);
-}
-
-function originMatches(origin: string, rule: string): boolean {
-  if (rule === '*' || rule === origin) return true;
-  const m = /^(https?:\/\/)\*\.(.+)$/.exec(rule);
-  return !!m && origin.startsWith(m[1]!) && origin.endsWith(`.${m[2]}`);
-}
-
-/** Zonder project: mag deze origin überhaupt insturen. Met project: ook onder die naam. */
-export function originAllowed(origin: string, allowed: string[], project?: string): boolean {
-  for (const entry of allowed) {
-    const [rule, projects] = entry.split('=', 2) as [string, string | undefined];
-    if (!originMatches(origin, rule)) continue;
-    if (project === undefined || !projects || projects.split('|').includes(project)) return true;
-  }
-  return false;
 }
 
 function hostOf(origin: string): string {
@@ -126,6 +115,8 @@ function limitBytes(max: number): Transform {
 
 const MAX_TRACKED_IPS = 10_000;
 const DEMO_PROJECT = 'demo';
+const MAX_JSON_BYTES = 64 * 1024;
+const ADMIN_CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; media-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 export function createApp(config: AppConfig) {
   const { storage } = config;
@@ -170,6 +161,50 @@ export function createApp(config: AppConfig) {
     res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="audio-feedback", charset="UTF-8"', 'Cache-Control': 'no-store' });
     res.end();
     return false;
+  }
+
+  /** De demopagina op de eigen origin; alleen als die aanstaat. */
+  function isDemoOrigin(req: IncomingMessage, origin: string): boolean {
+    return config.demo && origin !== '' && hostOf(origin) === (req.headers.host ?? '');
+  }
+
+  /** Basic auth gaat automatisch mee; zonder deze check kan een andere site een wijziging uitlokken. */
+  function requireSameOrigin(req: IncomingMessage, origin: string): void {
+    if (origin && hostOf(origin) !== req.headers.host) throw new HttpError(403, 'alleen vanaf de beheerpagina');
+  }
+
+  /** Alleen application/json: een formulier van een andere site kan dat niet zonder preflight versturen. */
+  async function readJson(req: IncomingMessage): Promise<unknown> {
+    if (!(req.headers['content-type'] ?? '').startsWith('application/json')) throw new HttpError(415, 'verwacht application/json');
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      size += chunk.length;
+      if (size > MAX_JSON_BYTES) throw new HttpError(413, 'te groot');
+      chunks.push(chunk);
+    }
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      throw new HttpError(400, 'geen geldige JSON');
+    }
+  }
+
+  /** Het adres waarop apps de widget laden, voor de scripttag in /admin/sites. */
+  function publicBase(req: IncomingMessage): string {
+    const fwd = req.headers['x-forwarded-proto'];
+    const proto = config.trustProxy && typeof fwd === 'string' ? fwd.split(',')[0]!.trim() : 'http';
+    return `${proto}://${req.headers.host ?? 'localhost'}`;
+  }
+
+  function sendAdminHtml(res: ServerResponse, html: string): void {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': ADMIN_CSP,
+      'Referrer-Policy': 'no-referrer',
+    });
+    res.end(html);
   }
 
   async function serveFile(res: ServerResponse, path: string, type: string, cache: string): Promise<void> {
@@ -227,8 +262,17 @@ export function createApp(config: AppConfig) {
 
     const meta = parseMeta(form.get('meta'));
     // De demopagina staat open voor iedereen; zijn opnames blijven apart van die van de apps.
-    const projectAllowed = sameOrigin ? meta.project === DEMO_PROJECT : originAllowed(origin, config.allowedOrigins, meta.project);
+    const projectAllowed = sameOrigin ? meta.project === DEMO_PROJECT : config.sites.allows(origin, meta.project);
     if (!projectAllowed) throw new HttpError(403, `deze website mag niet insturen onder project ${meta.project}`);
+    // Wat de widget ook stuurt: er blijft niet meer van de URL over dan in /admin/sites staat.
+    const urlOptions: UrlOptions = (!sameOrigin && config.sites.match(origin)) || STRICT_URL_OPTIONS;
+    meta.url = cleanUrl(meta.url, urlOptions);
+    for (const entry of meta.timeline) {
+      if (!entry.url) continue;
+      const cleaned = cleanUrl(entry.url, urlOptions);
+      if (cleaned) entry.url = cleaned;
+      else delete entry.url;
+    }
     const audio = form.get('audio');
     if (!(audio instanceof Blob) || audio.size === 0) throw new ValidationError('audio ontbreekt');
     const sniffed = sniffAudio(new Uint8Array(await audio.slice(0, 12).arrayBuffer()));
@@ -298,10 +342,8 @@ export function createApp(config: AppConfig) {
           res.setHeader('Access-Control-Allow-Origin', origin);
           res.setHeader('Vary', 'Origin');
         }
-        const host = req.headers.host ?? '';
-        // De eigen origin is alleen de demopagina; die mag alleen insturen als hij aanstaat.
-        const sameOrigin = config.demo && origin !== '' && hostOf(origin) === host;
-        if (!origin || (!sameOrigin && !originAllowed(origin, config.allowedOrigins))) {
+        const sameOrigin = isDemoOrigin(req, origin);
+        if (!origin || (!sameOrigin && !config.sites.allows(origin))) {
           throw new HttpError(403, 'deze website mag geen feedback insturen');
         }
         if (method === 'OPTIONS') {
@@ -328,6 +370,18 @@ export function createApp(config: AppConfig) {
           return await serveFile(res, join(config.distDir, 'fonts', 'montserrat-latin-wght-normal.woff2'), 'font/woff2', 'public, max-age=31536000, immutable');
         }
         if (path === '/health') return json(res, 200, { ok: true, version: config.version });
+        if (path === '/api/sites/config') {
+          // De widget vraagt dit bij Opnemen; zo geldt een wijziging in beheer meteen.
+          if (origin) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+          }
+          const demo = isDemoOrigin(req, origin);
+          const site = origin && !demo ? config.sites.match(origin) : null;
+          if (!demo && !site) throw new HttpError(403, 'deze website staat niet in de lijst');
+          const { stripQuery, stripHash, keepParams } = site ?? STRICT_URL_OPTIONS;
+          return json(res, 200, { stripQuery, stripHash, keepParams });
+        }
         if (config.demo && (path === '/' || path === '/demo' || path.startsWith('/demo/'))) {
           return await serveFile(res, join(config.publicDir, 'demo.html'), 'text/html; charset=utf-8', 'no-cache');
         }
@@ -338,14 +392,11 @@ export function createApp(config: AppConfig) {
           if (!requireAdmin(req, res)) return;
           const records = await storage.list();
           const project = url.searchParams.get('project') ?? '';
-          const html = renderAdmin(records, project);
-          res.writeHead(200, {
-            'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store',
-            'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; font-src 'self'; media-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-            'Referrer-Policy': 'no-referrer',
-          });
-          return void res.end(html);
+          return sendAdminHtml(res, renderAdmin(records, project));
+        }
+        if (path === '/admin/sites') {
+          if (!requireAdmin(req, res)) return;
+          return sendAdminHtml(res, renderSites(config.sites.list(), publicBase(req)));
         }
         if (path === '/api/recordings') {
           if (!requireAdmin(req, res)) return;
@@ -365,14 +416,30 @@ export function createApp(config: AppConfig) {
       const one = /^\/api\/recordings\/([0-9a-f-]{36})$/.exec(path);
       if (one && method === 'DELETE') {
         if (!requireAdmin(req, res)) return;
-        // Basic auth gaat automatisch mee; zonder deze check kan een andere site een DELETE uitlokken.
-        if (origin && hostOf(origin) !== req.headers.host) throw new HttpError(403, 'alleen vanaf de beheerpagina');
+        requireSameOrigin(req, origin);
         return json(res, (await storage.remove(one[1]!)) ? 200 : 404, {});
+      }
+
+      const siteId = /^\/api\/sites\/([0-9a-f-]{36})$/.exec(path)?.[1];
+      if (path === '/api/sites' || siteId) {
+        if (!requireAdmin(req, res)) return;
+        if (path === '/api/sites' && method === 'GET') return json(res, 200, { sites: config.sites.list() });
+        requireSameOrigin(req, origin);
+        if (path === '/api/sites' && method === 'POST') {
+          return json(res, 201, await config.sites.create(parseSiteInput(await readJson(req))));
+        }
+        if (siteId && method === 'PUT') {
+          const site = await config.sites.update(siteId, parseSiteInput(await readJson(req)));
+          return site ? json(res, 200, site) : json(res, 404, { error: 'niet gevonden' });
+        }
+        if (siteId && method === 'DELETE') return json(res, (await config.sites.remove(siteId)) ? 200 : 404, {});
+        throw new HttpError(405, 'methode niet toegestaan');
       }
 
       json(res, 404, { error: 'niet gevonden' });
     } catch (err) {
       if (err instanceof ValidationError) return json(res, 400, { error: err.message });
+      if (err instanceof SiteConflictError) return json(res, 409, { error: err.message });
       if (err instanceof HttpError) {
         // De body is nog niet gelezen; de verbinding hergebruiken heeft dan geen zin.
         if (err.status === 413 || err.status === 429 || err.status === 503) res.setHeader('Connection', 'close');

@@ -8,9 +8,9 @@ import { Recorder, RecorderError } from './recorder.ts';
 import { SessionStore, type StoredSession } from './store.ts';
 import { css, FONT_FAMILY } from './styles.ts';
 import type { RecordingMeta, TimelineEntry } from './types.ts';
-import { upload, UploadError } from './upload.ts';
+import { siteUrlOptions, upload, UploadError } from './upload.ts';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 export type Corner = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 
@@ -20,9 +20,6 @@ export interface WidgetConfig {
   project: string;
   position: Corner;
   maxDurationSec: number;
-  stripQuery: boolean;
-  stripHash: boolean;
-  keepParams: string[];
   /** Link "Hoe we hiermee omgaan" in het kaartje; leeg is geen link. */
   privacyUrl: string;
   startMinimized: boolean;
@@ -272,6 +269,9 @@ export class FeedbackWidget {
 
   private async startRecording(): Promise<void> {
     this.setView({ name: 'starting' });
+    // Vóór de microfoon: zodra die loopt, komen er stukjes audio binnen, en die moeten
+    // meteen bewaard worden (het eerste bevat de header van het bestand).
+    const urlOptions = await siteUrlOptions(this.config.endpoint);
     const recorder = new Recorder();
     try {
       await recorder.start();
@@ -307,7 +307,7 @@ export class FeedbackWidget {
     const release = await this.claim(meta.id);
     if (release) this.hold(release);
     this.tracker = new PageTracker(
-      { stripQuery: this.config.stripQuery, stripHash: this.config.stripHash, keepParams: this.config.keepParams },
+      urlOptions,
       () => recorder.elapsedMs(),
       (entry) => this.addTimeline(entry),
     );

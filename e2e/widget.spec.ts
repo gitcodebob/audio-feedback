@@ -70,16 +70,36 @@ async function clearRecordings(page: Page): Promise<void> {
   }
 }
 
+interface SiteSettings {
+  stripQuery?: boolean;
+  stripHash?: boolean;
+  keepParams?: string[];
+}
+
+/** Zet de instellingen van de host-app in /api/sites, zoals een beheerder dat in /admin/sites doet. */
+async function setSite(page: Page, settings: SiteSettings = {}): Promise<void> {
+  const res = await page.request.get(`${SERVER}/api/sites`, { headers: AUTH });
+  const { sites } = (await res.json()) as { sites: { id: string; origin: string }[] };
+  const site = sites.find((s) => s.origin === `http://localhost:${HOST_PORT}`)!;
+  const put = await page.request.put(`${SERVER}/api/sites/${site.id}`, {
+    headers: AUTH,
+    data: { origin: site.origin, projects: [], stripQuery: true, stripHash: true, keepParams: [], ...settings },
+  });
+  expect(put.ok()).toBe(true);
+}
+
 const widget = (page: Page) => page.locator('audio-feedback-widget');
 const button = (page: Page, name: string | RegExp) => widget(page).getByRole('button', { name });
 
 test.beforeEach(async ({ page }) => {
   await clearRecordings(page);
+  await setSite(page);
 });
 
 test('opnemen, pauzeren, hervatten en versturen legt de pagina’s vast', async ({ page }) => {
-  // Query en hash gaan alleen mee als de app dat aanzet.
-  serveHost('data-keep-params="tab" data-strip-hash="false"');
+  // Query en hash gaan alleen mee als dat in /admin/sites aanstaat.
+  await setSite(page, { keepParams: ['tab'], stripHash: false });
+  serveHost();
   await page.goto('/host/start');
   await expect(widget(page).getByText('Vertel wat je ziet of ervaart')).toBeVisible();
 
@@ -158,6 +178,54 @@ test('standaard gaan query en hash niet mee; het bedankje noemt kenmerk en bewaa
   await expect(widget(page).getByText('Bedankt! Je feedback is verstuurd.')).toBeVisible();
   await expect(widget(page).getByText(`Kenmerk ${rec!.id.slice(0, 8)}`)).toBeVisible();
   await expect(widget(page).getByText('We bewaren hem 90 dagen.')).toBeVisible();
+});
+
+test('in /admin/sites ingesteld, geldt meteen bij de volgende opname', async ({ browser, page }) => {
+  const admin = await browser.newContext({ httpCredentials: { username: 'beheer', password: 'e2e' } });
+  const adminPage = await admin.newPage();
+  await adminPage.goto(`${SERVER}/admin/sites`);
+  const form = adminPage.locator('form.site', { has: adminPage.getByRole('heading', { name: `http://localhost:${HOST_PORT}` }) });
+
+  // Het voorbeeld laat zien wat er bewaard blijft, al tijdens het instellen.
+  await form.getByLabel('Voorbeeldadres').fill(`http://localhost:${HOST_PORT}/x?tab=2&token=geheim#/route`);
+  await expect(form.locator('output')).toHaveText(`http://localhost:${HOST_PORT}/x`);
+  await form.getByLabel('Parameters die mee mogen').fill('tab');
+  await expect(form.getByLabel('Alleen deze parameters:')).toBeChecked();
+  await form.getByLabel('Hash meesturen').check();
+  await expect(form.locator('output')).toHaveText(`http://localhost:${HOST_PORT}/x?tab=2#/route`);
+  await form.getByRole('button', { name: 'Opslaan' }).click();
+  await adminPage.waitForLoadState('load');
+  await expect(form.getByLabel('Parameters die mee mogen')).toHaveValue('tab');
+  await admin.close();
+
+  // De app is niet aangepast of opnieuw geladen met andere attributen.
+  serveHost();
+  await page.goto('/host/start?tab=2&token=geheim#/route');
+  await button(page, 'Opnemen').click();
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+  await page.waitForTimeout(1200);
+  await button(page, 'Stoppen').click();
+  await expect(widget(page).getByRole('list', { name: /Pagina/ })).toContainText('/host/start?tab=2#/route');
+  await button(page, 'Versturen').click();
+  await expect(widget(page).getByText('Bedankt!')).toBeVisible();
+  const [rec] = await recordings(page);
+  expect(rec!.url).toBe(`http://localhost:${HOST_PORT}/host/start?tab=2#/route`);
+});
+
+test('zonder antwoord over de site-instellingen gaat alleen het pad mee', async ({ page }) => {
+  await setSite(page, { stripQuery: false, stripHash: false });
+  await page.route('**/api/sites/config', (route) => route.abort());
+  serveHost();
+  await page.goto('/host/start?token=geheim#access_token=abc');
+  await button(page, 'Opnemen').click();
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+  await page.waitForTimeout(1200);
+  await button(page, 'Stoppen').click();
+  await expect(widget(page).getByRole('list', { name: /Pagina/ })).not.toContainText('geheim');
+  await button(page, 'Versturen').click();
+  await expect(widget(page).getByText('Bedankt!')).toBeVisible();
+  const [rec] = await recordings(page);
+  expect(rec!.url).toBe(`http://localhost:${HOST_PORT}/host/start`);
 });
 
 test('AudioFeedback.clear() gooit een klaarstaande opname weg', async ({ page }) => {

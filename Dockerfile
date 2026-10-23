@@ -17,7 +17,7 @@ WORKDIR /app
 COPY package.json ./
 COPY server server
 COPY public public
-COPY widget/src/types.ts widget/src/types.ts
+COPY widget/src/types.ts widget/src/clean-url.ts widget/src/
 COPY --from=build /app/dist dist
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data
 EXPOSE 8080

@@ -30,7 +30,7 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
 | Veld | Inhoud |
 |---|---|
 | audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut |
-| `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Zie `data-keep-params` en `data-strip-hash` |
+| `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Per site in te stellen in [`/admin/sites`](#sites-beheren) |
 | `timeline` | elke pagina-wissel tijdens de opname (`pushState`, gewone navigatie, en de hash als die meegaat), plus pauze en hervat, met de positie in de opname. In de beheerpagina klik je op een tijd en hoor je wat er bij die pagina gezegd werd |
 | `context` | vrije sleutel-waardeparen van de app zelf, bijvoorbeeld versie of omgeving |
 | `client` | user agent, taal, venstergrootte |
@@ -86,21 +86,22 @@ er bij de server aankomt.
 | toetsen lekken niet | ✔ spatie, Enter, Escape, Ctrl+Z bereiken het spel niet. Tegenproef: dezelfde Escape buiten het kaartje sluit de ranglijst wel | ✔ Ctrl+Z/Y bereikt de kast-editor niet | ✔ Ctrl+Z bereikt de undo niet |
 | fouten van de widget | geen | geen | geen |
 
-Per app, om op te letten:
+Per app, om op te letten. De instellingen voor query en hash staan in `/admin/sites`, niet op
+de scripttag:
 
-- **defend-greenland**: zet de tag in `index.html` na de `<script type="module">` (regel ~2554),
-  met `data-keep-params="quality" data-strip-hash="false"`, anders ontbreken kwaliteit en level
-  in de tijdlijn. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
+- **defend-greenland**: zet de tag in `index.html` na de `<script type="module">` (regel ~2554).
+  In `/admin/sites`: alleen parameter `quality`, en de hash meesturen, anders ontbreken
+  kwaliteit en level in de tijdlijn. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
   `webgl.spec.ts` faalt op elke `console.error`, maar onder Playwright laat de widget zich niet
   zien, dus dat blijft groen. `deploy:check` en de buildtests kijken alleen naar `dist/`, en daar
   komt de widget niet in.
-- **elektra-ontwerper**: zet de tag in `apps/web/src/index.html` na `<app-root>`, met
-  `data-keep-params="proef"`. Op 1280×720
+- **elektra-ontwerper**: zet de tag in `apps/web/src/index.html` na `<app-root>`. In
+  `/admin/sites`: alleen parameter `proef`. Op 1280×720
   bedekt het kaartje de onderkant van de sneltoetsenlijst rechts. Gebruikers kunnen het
   verslepen of minimaliseren. Wie het standaard klein wil: `data-minimized`.
 - **meterkast**: zet de tag in `index.html` na de `<script type="module">`. Het kaartje staat
   er ook op het inlogscherm. Bij afdrukken (groepenlijst) verdwijnt het. De app routeert met de
-  hash (`#/ontwerp/<id>/<tab>`), dus zet `data-strip-hash="false"`. Dan is in de feedback te zien
+  hash (`#/ontwerp/<id>/<tab>`), dus zet in `/admin/sites` de hash aan. Dan is in de feedback te zien
   over welk ontwerp en welke tab het ging. Roep bij uitloggen `AudioFeedback.clear()` aan.
 
 ## Integreren
@@ -110,7 +111,6 @@ Per app, om op te letten:
   src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js"
   data-project="meterkast"
   data-position="bottom-right"
-  data-strip-hash="false"
   data-privacy-url="https://meterkast.example.nl/privacy"
   data-context='{"versie": "1.4.0"}'
   defer></script>
@@ -124,8 +124,6 @@ Per app, om op te letten:
 | `data-max-duration` | `600` | maximale opnameduur in seconden (hooguit 1800) |
 | `data-hosts` | alle | komma-gescheiden hostnamen waarop de widget verschijnt, bijvoorbeeld alleen productie |
 | `data-minimized` | uit | begint als pil |
-| `data-strip-query` / `data-strip-hash` | aan | laat query of hash weg uit de opgeslagen URL's. Zet `="false"` om ze te houden |
-| `data-keep-params` | — | komma-gescheiden queryparameters die ondanks `data-strip-query` meegaan, zoals `tab,proef` |
 | `data-privacy-url` | — | link "Hoe we hiermee omgaan" in het kaartje |
 | `data-context` | — | JSON-object met extra velden |
 | `data-allow-webdriver` | uit | ook tonen onder Playwright/Selenium |
@@ -153,20 +151,41 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
 | `GET /admin` | beheerpagina: luisteren, per pagina naar de tijd springen, filteren per project, downloaden, verwijderen |
+| `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
+| `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
+| `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
 | `GET /api/recordings[?project=]` | lijst als JSON |
 | `GET /api/recordings/:id/audio` | audio, met Range-requests |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
 | `GET /health` | `{ ok, version }` |
 
-`/admin` en de `GET`/`DELETE` op `/api/recordings` vragen Basic auth: een willekeurige naam, en
-`ADMIN_PASSWORD` als wachtwoord.
+`/admin`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic
+auth: een willekeurige naam, en `ADMIN_PASSWORD` als wachtwoord.
+
+### Sites beheren
+
+Alleen websites in de sitelijst mogen opnames insturen. De lijst staat in
+`<DATA_DIR>/sites.json` en beheer je in `/admin/sites`. Per site stel je in:
+
+- **Website**: de origin (`https://app.example.nl`, of `https://*.example.nl` voor alle
+  subdomeinen). Een geplakt adres met pad wordt vanzelf een origin.
+- **Projectnaam**: welke `data-project` die site mag gebruiken. Meerdere met komma's; leeg is
+  elke naam.
+- **Query**: weglaten (standaard), alleen bepaalde parameters, of alles.
+- **Hash**: weglaten (standaard) of meesturen, voor apps met hash-routes.
+
+Een voorbeeldveld laat meteen zien wat er van een adres overblijft. Wijzigingen gelden bij de
+volgende opname: de widget vraagt de instellingen op als iemand op **Opnemen** klikt, dus de app
+hoeft niet opnieuw te worden uitgerold. De server past dezelfde regels toe bij ontvangst, zodat
+ook een oude widget niet meer opslaat dan ingesteld. Lukt het opvragen niet, dan stuurt de widget
+alleen het pad mee.
 
 | Variabele | Standaard | |
 |---|---|---|
-| `ALLOWED_ORIGINS` | leeg: alleen de eigen origin (met `DEMO` aan) | komma-gescheiden. Mag `https://*.example.nl` of `*` bevatten. Met `=project` (of `=a\|b`) erachter mag die origin alleen onder die projecten insturen |
+| `ALLOWED_ORIGINS` | leeg | **alleen bij de eerste start**: vult de sitelijst als `sites.json` nog niet bestaat. Komma-gescheiden, met `=project` (of `=a\|b`) erachter. Daarna beheer je de sites in `/admin/sites` |
 | `ADMIN_PASSWORD` | leeg: beheer staat uit | |
-| `DATA_DIR` | `./data` | opnames in `recordings/<id>.webm` en `<id>.json` |
+| `DATA_DIR` | `./data` | opnames in `recordings/<id>.webm` en `<id>.json`, de sitelijst in `sites.json` |
 | `RETENTION_DAYS` | `90` | ouder wordt verwijderd. `0` bewaart alles |
 | `MAX_UPLOAD_MB` | `9.5` | onder de 10 MB van de host-Caddy |
 | `MAX_STORAGE_MB` | `2048` | alle opnames samen. Past een nieuwe opname er niet meer bij, dan gaan de oudste weg: nieuwe feedback gaat voor. Let op: een vloed aan nep-uploads verdringt zo ook echte feedback. Hoe snel dat kan, bepalen de rate limits. `0` is geen grens |
@@ -219,5 +238,4 @@ Verifiëren: de live `widget.js` hoort byte-gelijk te zijn aan een verse lokale 
 npm run build && curl -fsS https://audio-feedback.hetzner.bobreijnders.nl/widget.js | cmp - dist/widget.js && echo live == build
 ```
 
-Een nieuwe app laten insturen: voeg `<origin>=<project>` toe aan `ALLOWED_ORIGINS` in
-`compose.yaml` en rol opnieuw uit.
+Een nieuwe app laten insturen: voeg hem toe in `/admin/sites`. Opnieuw uitrollen is niet nodig.

@@ -6,7 +6,7 @@ import type { RecordingMeta, TimelineEntry } from '../widget/src/types.ts';
 export class ValidationError extends Error {}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+export const PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const TIMELINE_TYPES = new Set<TimelineEntry['type']>(['start', 'navigate', 'pause', 'resume', 'stop']);
 const MAX_DURATION_MS = 2 * 60 * 60 * 1000;
 
