@@ -226,12 +226,13 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 |---|---|
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
-| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, downloaden, verwijderen |
+| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, audio en events downloaden, verwijderen |
 | `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
 | `GET /api/recordings[?project=]` | lijst als JSON |
 | `GET /api/recordings/:id/audio` | audio, met Range-requests |
+| `GET /api/recordings/:id/events` | de events van een opname als JSON-bestand (`<project>-<kenmerk>-events.json`), om te delen of verder te verwerken. Met project, start, duur, beginpagina, context en browser; elk event met `time` zoals de speler hem toont (`1:05`, `−0:03`). Bestandsnaam, grootte en origin van de opslag gaan niet mee |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
 | `GET /openapi.yaml` | OpenAPI-spec van de upload en het eventschema |

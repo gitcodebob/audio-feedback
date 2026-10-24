@@ -501,6 +501,40 @@ describe('beheer', () => {
     assert.equal(await storage.get(m.id), null);
   });
 
+  test('events als JSON-download, met de gegevens van de opname maar zonder die van de opslag', async () => {
+    const m = meta({
+      project: 'meterkast',
+      timeline: [
+        { at: -3_000, type: 'screen', label: 'Groepenlijst' },
+        { at: 0, type: 'start', url: `${ORIGIN}/editor#3`, title: 'Editor' },
+        { at: 65_000, type: 'error', label: 'Opslaan mislukt', data: { status: 500 } },
+      ],
+    });
+    await post(m);
+    const url = `${base}/api/recordings/${m.id}/events`;
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(`${base}/api/recordings/${crypto.randomUUID()}/events`, { headers: AUTH })).status, 404);
+
+    const res = await fetch(url, { headers: AUTH });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
+    assert.equal(res.headers.get('content-disposition'), `attachment; filename="meterkast-${m.id.slice(0, 8)}-events.json"`);
+    const doc = (await res.json()) as Record<string, unknown>;
+    assert.equal(doc.id, m.id);
+    assert.equal(doc.kenmerk, m.id.slice(0, 8));
+    assert.equal(doc.project, 'meterkast');
+    assert.deepEqual(doc.context, { versie: '1.2' });
+    assert.deepEqual(doc.events, [
+      { time: '−0:03', at: -3_000, type: 'screen', label: 'Groepenlijst' },
+      { time: '0:00', at: 0, type: 'start', url: `${ORIGIN}/editor`, title: 'Editor' },
+      { time: '1:05', at: 65_000, type: 'error', label: 'Opslaan mislukt', data: { status: '500' } },
+    ]);
+    for (const key of ['audioFile', 'sizeBytes', 'origin', 'timeline']) assert.ok(!(key in doc), key);
+
+    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    assert.ok(html.includes(`href="/api/recordings/${m.id}/events" download="meterkast-${m.id.slice(0, 8)}-events.json"`));
+  });
+
   test('de beheerpagina escapet wat clients insturen', async () => {
     const m = meta({
       title: '<script>alert(1)</script>',
