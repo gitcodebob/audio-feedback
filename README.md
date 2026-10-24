@@ -48,7 +48,11 @@ vóór **Opnemen** gaan ook mee. Meer opties staan bij [Integreren](#integreren)
 ### Wat de gebruiker ziet
 
 1. **Kaartje rechtsonder** met een korte uitleg en de knop **Opnemen**. Het is te verslepen en
-   te minimaliseren tot een pil; positie en stand worden onthouden.
+   te minimaliseren tot een pil; positie en stand worden onthouden. Wie het kaartje niet
+   gebruikt, krijgt het steeds minder in beeld: zonder klik of toets klapt het na 30 seconden in
+   tot een pil, en de pil zakt na nog eens 30 seconden weg tot een doorzichtig bolletje. Dat
+   wordt bij de muis weer helemaal zichtbaar, en een klik klapt het kaartje uit. Tijdens een
+   opname, met een opname die klaarstaat of bij een foutmelding gebeurt dit niet.
 2. **Opnemen**: een lopende tijd, een niveaumeter en de knoppen **Pauzeren/Hervatten** en
    **Stoppen**. Geminimaliseerd toont de pil de lopende tijd.
 3. **Terugluisteren**: een speler, en de lijst met pagina's die meegaan, zodat de gebruiker ziet
@@ -158,7 +162,7 @@ de scripttag:
 | `data-position` | `bottom-right` | `bottom-left`, `top-right`, `top-left` |
 | `data-max-duration` | `600` | maximale opnameduur in seconden (hooguit 1800) |
 | `data-hosts` | alle | komma-gescheiden hostnamen waarop de widget verschijnt, bijvoorbeeld alleen productie |
-| `data-minimized` | uit | begint als pil |
+| `data-minimized` | uit | begint als pil (die na 30 seconden zonder gebruik een bolletje wordt) |
 | `data-privacy-url` | — | link "Hoe we hiermee omgaan" in het kaartje |
 | `data-context` | — | JSON-object met extra velden |
 | `data-allow-webdriver` | uit | ook tonen onder Playwright/Selenium |
