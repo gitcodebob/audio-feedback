@@ -1,7 +1,7 @@
 // Beheerpagina: per opname de audio, de pagina's die erbij open stonden en wat de
 // app meldde (klik op een tijd om daarheen te springen) en de context. Alle velden komen van
 // clients en gaan dus door escape(); als link alleen http(s). Plus de events van een opname
-// als JSON-download, om te delen of verder te verwerken.
+// als JSON- of Markdown-download, om te delen of verder te verwerken.
 
 import { extname } from 'node:path';
 import type { Site } from './sites.ts';
@@ -78,6 +78,48 @@ export function eventsDocument(r: StoredRecording) {
 }
 
 /**
+ * Wat een client instuurt gaat in een bestand dat ergens gerenderd wordt. Daarom op één regel en
+ * zonder eigen opmaak: een label kan geen kop, lijst of link maken.
+ */
+function md(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().replace(/[\\`*_[\]<>&~]/g, '\\$&');
+}
+
+/** Een http(s)-adres als autolink, zodat het klikbaar is zonder dat het eigen opmaak meebrengt. */
+function mdLink(url: string): string {
+  return /^https?:\/\/[^\s<>]+$/i.test(url) ? `<${url}>` : md(url);
+}
+
+function mdPairs(values: Record<string, string>, indent = ''): string[] {
+  return Object.entries(values).map(([k, v]) => `${indent}- **${md(k)}:** ${md(v)}`);
+}
+
+/** Dezelfde events en gegevens als eventsDocument, om te lezen en te plakken in plaats van te verwerken. */
+export function eventsMarkdown(r: StoredRecording): string {
+  const doc = eventsDocument(r);
+  const { client } = doc;
+  const lines = [
+    `# Feedback ${md(doc.project)} · ${doc.kenmerk}`,
+    '',
+    `- **Project:** ${md(doc.project)}`,
+    `- **Opgenomen:** ${dateFormat.format(new Date(doc.startedAt))}`,
+    `- **Duur:** ${time(doc.durationMs)}`,
+    `- **Pagina:** ${[mdLink(doc.url), doc.title && md(doc.title)].filter(Boolean).join(' — ')}`,
+    `- **Browser:** ${md(client.userAgent)} · ${client.viewport.width}×${client.viewport.height} · ${md(client.language)}`,
+    `- **Id:** ${doc.id}`,
+  ];
+  if (doc.recovered) lines.push('- **Teruggehaald:** na een navigatie of crash; het laatste stukje kan ontbreken');
+  if (Object.keys(doc.context).length) lines.push('', '## Context', '', ...mdPairs(doc.context));
+  lines.push('', '## Events', '');
+  if (!doc.events.length) lines.push('Geen events.');
+  for (const e of doc.events) {
+    const about = [e.label && md(e.label), e.title && md(e.title), e.url && mdLink(e.url)].filter(Boolean).join(' — ');
+    lines.push(`- \`${e.time}\` **${md(e.type)}**${about && ` — ${about}`}`, ...mdPairs(e.data ?? {}, '  '));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
  * Elk bestand dat je van een opname haalt heet hetzelfde en verschilt alleen in extensie:
  * project en kenmerk. Zo staan audio, mp3 en events bij een verzameling op schaal in één
  * map naast elkaar, en vind je bij elkaar wat bij elkaar hoort.
@@ -95,8 +137,29 @@ export function eventsFileName(r: StoredRecording): string {
   return `${downloadBase(r)}.json`;
 }
 
+export function eventsMarkdownFileName(r: StoredRecording): string {
+  return `${downloadBase(r)}.md`;
+}
+
 export function mp3FileName(r: StoredRecording): string {
   return `${downloadBase(r)}.mp3`;
+}
+
+interface DownloadFormat {
+  label: string;
+  href: string;
+  file: string;
+  title: string;
+}
+
+/** Eén knop: klikken haalt het eerste formaat, het carret klapt alle formaten uit. */
+function downloadButton(label: string, formats: [DownloadFormat, ...DownloadFormat[]]): string {
+  const link = (f: DownloadFormat, text: string) =>
+    `<a href="${f.href}" download="${escape(f.file)}" title="${escape(f.title)}">${text}</a>`;
+  return `<span class="split">${link(formats[0], label)}<details>
+        <summary aria-label="${label}: andere formaten" title="Andere formaten"></summary>
+        <div class="menu">${formats.map((f) => link(f, f.label)).join('')}</div>
+      </details></span>`;
 }
 
 function renderRecording(r: StoredRecording): string {
@@ -108,9 +171,14 @@ function renderRecording(r: StoredRecording): string {
       <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
       ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
       <span class="spacer"></span>
-      <a href="/api/recordings/${r.id}/audio" download="${escape(audioFileName(r))}" title="Audio downloaden zoals opgenomen">audio</a>
-      <a href="/api/recordings/${r.id}/audio.mp3" download="${escape(mp3FileName(r))}" title="Audio als mp3, voor tools die geen WebM lezen">mp3</a>
-      <a href="/api/recordings/${r.id}/events" download="${escape(eventsFileName(r))}" title="Events en gegevens van de opname als JSON">events</a>
+      ${downloadButton('audio', [
+        { label: 'mp3', href: `/api/recordings/${r.id}/audio.mp3`, file: mp3FileName(r), title: 'Audio als mp3, voor tools die geen WebM lezen' },
+        { label: extname(r.audioFile).slice(1), href: `/api/recordings/${r.id}/audio`, file: audioFileName(r), title: 'Audio zoals opgenomen' },
+      ])}
+      ${downloadButton('events', [
+        { label: 'json', href: `/api/recordings/${r.id}/events`, file: eventsFileName(r), title: 'Events en gegevens van de opname als JSON' },
+        { label: 'markdown', href: `/api/recordings/${r.id}/events.md`, file: eventsMarkdownFileName(r), title: 'Events en gegevens van de opname als Markdown, om te lezen of te plakken' },
+      ])}
       <button class="delete" data-delete="${r.id}">verwijderen</button>
     </header>
     <audio controls preload="metadata" src="/api/recordings/${r.id}/audio" data-duration="${r.durationMs}"></audio>
@@ -150,6 +218,16 @@ const STYLE = `
   button { font: inherit; cursor: pointer; }
   .seek { border: 0; background: #f8e800; color: #242f36; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .seek.before { background: #eef0f2; }
+  .split { position: relative; display: inline-flex; border-radius: 999px; background: #f6f8fa; }
+  .split a, .split summary { color: #242f36; text-decoration: none; padding: 4px 12px; }
+  .split > a { border-radius: 999px 0 0 999px; padding-right: 10px; }
+  .split summary { display: block; list-style: none; cursor: pointer; font-size: inherit; border-left: 1px solid #d5dade; border-radius: 0 999px 999px 0; padding: 4px 10px 4px 8px; }
+  .split summary::-webkit-details-marker { display: none; }
+  .split summary::after { content: ""; display: inline-block; vertical-align: middle; border: 4px solid transparent; border-top-color: currentColor; border-bottom-width: 0; }
+  .split > a:hover, .split summary:hover, .split details[open] summary { background: #eef0f2; }
+  .split .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 1; display: grid; min-width: 100%; padding: 4px; border-radius: 10px; background: #fff; box-shadow: 1px 6px 24px #0000002e; }
+  .split .menu a { border-radius: 6px; white-space: nowrap; }
+  .split .menu a:hover { background: #f6f8fa; }
   .delete { border: 0; background: #f6f8fa; color: #d0021b; border-radius: 999px; padding: 4px 12px; }
   .delete:hover { background: #d0021b; color: #fff; }
   .empty { margin-top: 24px; color: #77818b; }

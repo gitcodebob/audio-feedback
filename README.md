@@ -230,7 +230,7 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 |---|---|
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
-| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, audio (zoals opgenomen of als mp3) en events downloaden, verwijderen |
+| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, verwijderen, en audio en events downloaden. Elk is één knop: klikken geeft mp3 resp. JSON, het carret klapt de andere formaten uit (audio zoals opgenomen, events als Markdown) |
 | `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
@@ -238,12 +238,13 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 | `GET /api/recordings/:id/audio` | audio zoals opgenomen (`<project>-<kenmerk>.webm`, `.ogg` of `.m4a`), met Range-requests |
 | `GET /api/recordings/:id/audio.mp3` | dezelfde audio als mp3-download (`<project>-<kenmerk>.mp3`), mono op 64 kbit/s, door ffmpeg omgezet terwijl het binnenkomt. Veel verwerkingstools lezen geen WebM met alleen audio, mp3 wel. Er is geen lengte vooraf en geen Range: dit is om te downloaden, niet om af te spelen. Zonder ffmpeg: 501. Te veel tegelijk: 503 met `Retry-After` |
 | `GET /api/recordings/:id/events` | de events van een opname als JSON-bestand (`<project>-<kenmerk>.json`), om te delen of verder te verwerken. Met project, start, duur, beginpagina, context en browser; elk event met `time` zoals de speler hem toont (`1:05`, `−0:03`). Bestandsnaam, grootte en origin van de opslag gaan niet mee |
+| `GET /api/recordings/:id/events.md` | dezelfde events en gegevens als Markdown (`<project>-<kenmerk>.md`): een kop, de gegevens van de opname, de context en per event een regel met `time`, type en omschrijving, met de `data` eronder. Om te lezen of in een ticket of chat te plakken. Wat een client instuurt komt op één regel en zonder eigen opmaak in het bestand; een adres wordt een klikbare link |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
 | `GET /openapi.yaml` | OpenAPI-spec van de upload en het eventschema |
 | `GET /health` | `{ ok, version }` |
 
-Wat je van één opname downloadt heet hetzelfde, op de extensie na: `<project>-<kenmerk>.webm` (of `.ogg`, `.m4a`), `.mp3` en `.json`. Bij een verzameling op schaal in één map staan ze zo naast elkaar en vind je bij elkaar wat bij elkaar hoort. Het kenmerk is de eerste 8 tekens van het id, hetzelfde als dat de widget na het versturen toont.
+Wat je van één opname downloadt heet hetzelfde, op de extensie na: `<project>-<kenmerk>.webm` (of `.ogg`, `.m4a`), `.mp3`, `.json` en `.md`. Bij een verzameling op schaal in één map staan ze zo naast elkaar en vind je bij elkaar wat bij elkaar hoort. Het kenmerk is de eerste 8 tekens van het id, hetzelfde als dat de widget na het versturen toont.
 
 `/admin`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic
 auth: een willekeurige naam, en `ADMIN_PASSWORD` als wachtwoord.

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { audioFileName, eventsFileName, mp3FileName } from '../server/admin.ts';
+import { audioFileName, eventsFileName, eventsMarkdownFileName, mp3FileName } from '../server/admin.ts';
 import { createApp, rateKey, type AppConfig } from '../server/app.ts';
 import { SiteStore } from '../server/sites.ts';
 import { Storage } from '../server/storage.ts';
@@ -539,6 +539,78 @@ describe('beheer', () => {
     assert.ok(html.includes(`href="/api/recordings/${m.id}/events" download="meterkast-${m.id.slice(0, 8)}.json"`));
   });
 
+  test('events als Markdown-download, met dezelfde gegevens als de JSON', async () => {
+    const m = meta({
+      project: 'meterkast',
+      recovered: true,
+      timeline: [
+        { at: -3_000, type: 'screen', label: 'Groepenlijst' },
+        { at: 0, type: 'start', url: `${ORIGIN}/editor#3`, title: 'Editor' },
+        { at: 65_000, type: 'error', label: 'Opslaan mislukt', data: { status: 500, stap: 'bewaren' } },
+      ],
+    });
+    await post(m);
+    const url = `${base}/api/recordings/${m.id}/events.md`;
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(`${base}/api/recordings/${crypto.randomUUID()}/events.md`, { headers: AUTH })).status, 404);
+
+    const res = await fetch(url, { headers: AUTH });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'text/markdown; charset=utf-8');
+    assert.equal(res.headers.get('content-disposition'), `attachment; filename="meterkast-${m.id.slice(0, 8)}.md"`);
+    const kenmerk = m.id.slice(0, 8);
+    assert.equal(await res.text(), [
+      `# Feedback meterkast · ${kenmerk}`,
+      '',
+      '- **Project:** meterkast',
+      `- **Opgenomen:** ${new Intl.DateTimeFormat('nl-NL', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Amsterdam' }).format(new Date(m.startedAt))}`,
+      '- **Duur:** 0:12',
+      `- **Pagina:** <${ORIGIN}/editor> — Editor`,
+      '- **Browser:** test · 800×600 · nl',
+      `- **Id:** ${m.id}`,
+      '- **Teruggehaald:** na een navigatie of crash; het laatste stukje kan ontbreken',
+      '',
+      '## Context',
+      '',
+      '- **versie:** 1.2',
+      '',
+      '## Events',
+      '',
+      '- `−0:03` **screen** — Groepenlijst',
+      `- \`0:00\` **start** — Editor — <${ORIGIN}/editor>`,
+      '- `1:05` **error** — Opslaan mislukt',
+      '  - **status:** 500',
+      '  - **stap:** bewaren',
+      '',
+    ].join('\n'));
+  });
+
+  test('de Markdown van events neemt van een client geen opmaak over', async () => {
+    const m = meta({
+      title: '# kop\n- lijst',
+      context: { '**vet**': '[link](https://evil.example.com)' },
+      timeline: [
+        { at: 1_000, type: 'level', label: 'regel een\n\n## regel twee <b>vet</b>', data: { 'k_1': '`code` & ~~weg~~' } },
+      ],
+    });
+    await post(m);
+    const md = await (await fetch(`${base}/api/recordings/${m.id}/events.md`, { headers: AUTH })).text();
+    assert.ok(md.includes('- **Pagina:** <' + ORIGIN + '/editor> — # kop - lijst\n'));
+    assert.ok(md.includes('- **\\*\\*vet\\*\\*:** \\[link\\](https://evil.example.com)\n'));
+    assert.ok(md.includes('- `0:01` **level** — regel een ## regel twee \\<b\\>vet\\</b\\>\n'));
+    assert.ok(md.includes('  - **k\\_1:** \\`code\\` \\& \\~\\~weg\\~\\~\n'));
+    // Elke regel begint met wat wij er zelf van maken; een client kan er geen kop of lijst bij zetten.
+    for (const line of md.split('\n')) assert.ok(/^(|# Feedback |## (Context|Events)|- |  - )/.test(line), line);
+  });
+
+  test('een opname zonder events of context geeft een korte Markdown', async () => {
+    const m = meta({ timeline: [], context: {} });
+    await post(m);
+    const md = await (await fetch(`${base}/api/recordings/${m.id}/events.md`, { headers: AUTH })).text();
+    assert.ok(!md.includes('## Context'));
+    assert.ok(md.endsWith('## Events\n\nGeen events.\n'));
+  });
+
   test('audio, mp3 en events van een opname heten hetzelfde, alleen de extensie verschilt', async () => {
     const m = meta({ project: 'meterkast' });
     await post(m);
@@ -548,16 +620,39 @@ describe('beheer', () => {
     assert.equal(audio.headers.get('content-disposition'), `inline; filename="${name}.webm"`);
     const events = await fetch(`${base}/api/recordings/${m.id}/events`, { headers: AUTH });
     assert.equal(events.headers.get('content-disposition'), `attachment; filename="${name}.json"`);
+    const markdown = await fetch(`${base}/api/recordings/${m.id}/events.md`, { headers: AUTH });
+    assert.equal(markdown.headers.get('content-disposition'), `attachment; filename="${name}.md"`);
 
     // En in de beheerpagina, waar de download-attributen de naam bepalen.
     const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
-    for (const [path, ext] of [['audio', 'webm'], ['audio.mp3', 'mp3'], ['events', 'json']]) {
+    for (const [path, ext] of [['audio', 'webm'], ['audio.mp3', 'mp3'], ['events', 'json'], ['events.md', 'md']]) {
       assert.ok(html.includes(`href="/api/recordings/${m.id}/${path}" download="${name}.${ext}"`), `${path} → ${name}.${ext}`);
     }
 
     // Het formaat volgt wat de browser opnam; de basis blijft gelijk.
     const record = { ...(await storage.get(m.id))!, audioFile: `${m.id}.m4a` };
-    assert.deepEqual([audioFileName(record), mp3FileName(record), eventsFileName(record)], [`${name}.m4a`, `${name}.mp3`, `${name}.json`]);
+    assert.deepEqual(
+      [audioFileName(record), mp3FileName(record), eventsFileName(record), eventsMarkdownFileName(record)],
+      [`${name}.m4a`, `${name}.mp3`, `${name}.json`, `${name}.md`],
+    );
+  });
+
+  test('in de beheerpagina is elke download één knop: klikken geeft het gewone formaat, het menu de rest', async () => {
+    const m = meta({ project: 'meterkast' });
+    await post(m);
+    const page = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const html = page.split(`<article class="rec" id="r-${m.id}">`)[1]!.split('</article>')[0]!;
+    const name = `meterkast-${m.id.slice(0, 8)}`;
+    // Per knop: eerst de hoofdlink, daarna dezelfde formaten in het uitklapmenu.
+    const buttons = [...html.matchAll(/<span class="split">(.*?)<\/span>/gs)].map(([, inner]) =>
+      [...inner!.matchAll(/<a href="([^"]+)" download="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map(([, href, file, label]) => [label, href, file]));
+    const at = `/api/recordings/${m.id}`;
+    assert.deepEqual(buttons, [
+      [['audio', `${at}/audio.mp3`, `${name}.mp3`], ['mp3', `${at}/audio.mp3`, `${name}.mp3`], ['webm', `${at}/audio`, `${name}.webm`]],
+      [['events', `${at}/events`, `${name}.json`], ['json', `${at}/events`, `${name}.json`], ['markdown', `${at}/events.md`, `${name}.md`]],
+    ]);
+    // De oude losse links zijn weg: mp3 staat alleen nog in de knop.
+    assert.equal(html.split(`href="${at}/audio.mp3"`).length - 1, 2);
   });
 
   test('de beheerpagina escapet wat clients insturen', async () => {
