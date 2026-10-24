@@ -165,8 +165,25 @@ audio { width: 100%; height: 36px; }
 .pill:hover > svg { color: inherit; }
 .pill .time { font-size: 14px; }
 
+/* Het bolletje waar de pil in wegzakt als niemand hem gebruikt: bijna onzichtbaar tot de muis (of toets) erbij komt. */
+.bubble {
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  --b: var(--af-darkblue);
+  --b-fg: #ffffff;
+  color: var(--b-fg);
+  opacity: 0.4;
+  box-shadow: 1px 4px 16px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: background-position 0.25s ease-in-out, color 0.2s ease-in, opacity 0.2s ease-in;
+}
+.bubble > svg { color: var(--af-yellow); }
+.bubble:hover, .bubble:focus-visible { opacity: 1; }
+.bubble:hover > svg { color: inherit; }
+
 @media (prefers-reduced-motion: reduce) {
   .dot.live { animation: none; }
-  button { transition: none; }
+  button, .bubble { transition: none; }
 }
 `;

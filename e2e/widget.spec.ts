@@ -389,6 +389,80 @@ test('minimaliseren onthoudt de stand en laat de lopende tijd zien', async ({ pa
   await expect(button(page, 'Feedback-kaartje openen')).toBeVisible();
 });
 
+test('zonder gebruik klapt het kaartje in tot een pil en daarna tot een bolletje dat bij een klik opent', async ({ page }) => {
+  await page.clock.install();
+  serveHost();
+  await page.goto('/host/start');
+  await expect(button(page, 'Opnemen')).toBeVisible();
+
+  // Een klik op het kaartje zet de teller terug op 30 seconden.
+  await page.clock.runFor(25_000);
+  await widget(page).getByText('Feedback inspreken', { exact: true }).click();
+  await page.clock.runFor(29_000);
+  await expect(button(page, 'Opnemen')).toBeVisible();
+  await page.clock.runFor(2_000);
+  const pill = widget(page).locator('.pill');
+  await expect(pill).toBeVisible();
+  await expect(button(page, 'Opnemen')).toHaveCount(0);
+
+  // De pil wacht nog eens 30 seconden. Een toets telt ook als gebruik.
+  await page.clock.runFor(25_000);
+  await pill.focus();
+  await page.keyboard.press('Shift');
+  await page.clock.runFor(29_000);
+  await expect(pill).toBeVisible();
+  await page.clock.runFor(2_000);
+  const bubble = widget(page).locator('.bubble');
+  await expect(bubble).toBeVisible();
+  await expect(pill).toHaveCount(0);
+
+  // Doorzichtig, tot de muis (of de toetsenbordfocus, die bij het inklappen meeverhuisde) erop staat.
+  await expect(bubble).toBeFocused();
+  await expect(bubble).toHaveCSS('opacity', '1');
+  await bubble.blur();
+  await page.mouse.move(0, 0);
+  await expect(bubble).toHaveCSS('opacity', '0.4');
+  await bubble.hover();
+  await expect(bubble).toHaveCSS('opacity', '1');
+
+  // Wie op het bolletje klikt, krijgt het hele kaartje terug.
+  await bubble.click();
+  await expect(button(page, 'Opnemen')).toBeVisible();
+  await expect(bubble).toHaveCount(0);
+
+  // De stand blijft na herladen: de pil begint daarna opnieuw te tellen.
+  await button(page, 'Minimaliseren').click();
+  await page.clock.runFor(31_000);
+  await expect(bubble).toBeVisible();
+  await page.reload();
+  await expect(widget(page).locator('.bubble')).toBeVisible();
+});
+
+test('tijdens een opname en bij een klaarstaande opname blijft het kaartje open', async ({ page }) => {
+  await page.clock.install();
+  serveHost();
+  await page.goto('/host/start');
+  await button(page, 'Opnemen').click();
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+  await page.clock.runFor(61_000);
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+
+  await button(page, 'Stoppen').click();
+  await expect(button(page, 'Versturen')).toBeVisible();
+  await page.clock.runFor(61_000);
+  await expect(button(page, 'Versturen')).toBeVisible();
+
+  // Ook als de gebruiker het zelf heeft geminimaliseerd: de pil zakt niet weg met een opname erachter.
+  await button(page, 'Minimaliseren').click();
+  await page.clock.runFor(61_000);
+  await expect(widget(page).locator('.pill')).toBeVisible();
+  await expect(widget(page).locator('.bubble')).toHaveCount(0);
+
+  await widget(page).locator('.pill').click();
+  await button(page, 'Weggooien').click();
+  await expect(button(page, 'Opnemen')).toBeVisible();
+});
+
 test('geweigerde microfoon geeft een begrijpelijke melding', async ({ page }) => {
   await page.addInitScript(() => {
     navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('nee', 'NotAllowedError'));

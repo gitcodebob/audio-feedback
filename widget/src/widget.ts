@@ -12,7 +12,7 @@ import { css, FONT_FAMILY } from './styles.ts';
 import type { RecordingMeta, TimelineEntry } from './types.ts';
 import { siteUrlOptions, upload, UploadError } from './upload.ts';
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 
 export type Corner = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 
@@ -48,6 +48,12 @@ const HEARTBEAT_STALE_MS = 10_000;
 const LOCAL_TTL_MS = 24 * 60 * 60 * 1000;
 /** Lang genoeg om het kenmerk over te nemen. */
 const SENT_VISIBLE_MS = 30_000;
+/**
+ * Wie het kaartje niet gebruikt, ziet het steeds kleiner worden: zonder klik of toets klapt
+ * het na deze tijd in tot een pil, en de pil daarna nog eens tot een doorzichtig bolletje.
+ */
+const AUTO_MINIMIZE_MS = 30_000;
+const AUTO_FADE_MS = 30_000;
 const DRAG_THRESHOLD_PX = 4;
 const MARGIN_PX = 16;
 
@@ -130,6 +136,9 @@ export class FeedbackWidget {
   private dropWarned = false;
   private view: View = { name: 'idle' };
   private minimized: boolean;
+  /** Een pil die ook nog is weggezakt tot een bolletje; alleen zinvol als minimized aan staat. */
+  private faded: boolean;
+  private idleTimer = 0;
   private session: StoredSession | null = null;
   private chunks: Blob[] = [];
   private seq = 0;
@@ -149,6 +158,7 @@ export class FeedbackWidget {
     this.context = { ...config.context };
     this.storageKey = `audio-feedback:${config.project}`;
     this.minimized = this.loadPref('minimized') ?? config.startMinimized;
+    this.faded = this.minimized && (this.loadPref<boolean>('faded') ?? false);
 
     this.host = document.createElement('audio-feedback-widget');
     this.host.setAttribute('data-version', VERSION);
@@ -162,6 +172,7 @@ export class FeedbackWidget {
     loadFont(config.endpoint);
     this.root.addEventListener('click', (e) => this.onClick(e as MouseEvent));
     this.root.addEventListener('pointerdown', (e) => this.onPointerDown(e as PointerEvent));
+    this.root.addEventListener('keydown', () => this.armIdleTimer());
 
     document.body.appendChild(this.host);
     this.applyAnchor(this.loadPref<Anchor>('anchor') ?? this.defaultAnchor());
@@ -170,6 +181,7 @@ export class FeedbackWidget {
     this.tracker = new PageTracker((url, title) => this.record({ type: 'navigate', url, title }));
     this.tracker.start();
     this.render();
+    this.armIdleTimer();
     void this.checkPending();
     // Bij een herlaadactie kan de lock van de vorige pagina er net nog zijn.
     window.setTimeout(() => void this.checkPending(), 3_000);
@@ -211,6 +223,7 @@ export class FeedbackWidget {
     this.tracker.stop();
     window.clearInterval(this.ticker);
     window.clearTimeout(this.sentTimer);
+    window.clearTimeout(this.idleTimer);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     if (this.audioUrl) URL.revokeObjectURL(this.audioUrl);
@@ -486,23 +499,61 @@ export class FeedbackWidget {
   // --- weergave -----------------------------------------------------------
 
   private setView(view: View): void {
-    // Wie met het toetsenbord bedient, houdt focus in het kaartje na een wissel.
-    const hadFocus = this.root.activeElement !== null;
     this.view = view;
-    this.render();
-    if (hadFocus) this.root.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    this.renderKeepingFocus();
+    this.armIdleTimer();
   }
 
   private setMinimized(value: boolean): void {
     this.minimized = value;
+    this.faded = false;
     this.savePref('minimized', value);
+    this.savePref('faded', false);
+    this.renderKeepingFocus();
+    this.armIdleTimer();
+  }
+
+  private setFaded(value: boolean): void {
+    this.faded = value;
+    this.savePref('faded', value);
+    this.renderKeepingFocus();
+    this.armIdleTimer();
+  }
+
+  /** Wie met het toetsenbord bedient, houdt focus in het kaartje na een wissel. */
+  private renderKeepingFocus(): void {
+    const hadFocus = this.root.activeElement !== null;
     this.render();
+    if (hadFocus) this.root.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+  }
+
+  /**
+   * Alleen een kaartje dat niets te doen heeft, krijgt een tijdslimiet. Bij een opname, een
+   * opname die klaarstaat of een foutmelding is het kaartje juist in gebruik, en
+   * verdwijnt het niet vanzelf.
+   */
+  private armIdleTimer(): void {
+    window.clearTimeout(this.idleTimer);
+    if (this.view.name !== 'idle' || this.faded) return;
+    const minimized = this.minimized;
+    this.idleTimer = window.setTimeout(
+      () => (minimized ? this.setFaded(true) : this.setMinimized(true)),
+      minimized ? AUTO_FADE_MS : AUTO_MINIMIZE_MS,
+    );
   }
 
   private render(): void {
     const v = this.view;
     const busy = v.name === 'recording' || v.name === 'paused';
     const elapsed = this.recorder?.elapsedMs() ?? this.session?.meta.durationMs ?? 0;
+
+    if (this.minimized && this.faded && !busy) {
+      this.root.innerHTML = `<style>${css}</style>
+        <button class="bubble" data-action="expand" data-drag data-autofocus
+          aria-label="Feedback-kaartje openen" title="Feedback inspreken">${icons.mic}</button>`;
+      this.clampToViewport();
+      return;
+    }
 
     if (this.minimized) {
       const dot = busy ? `<span class="dot ${v.name === 'paused' ? 'paused' : 'live'}"></span>` : icons.mic;
@@ -678,6 +729,7 @@ export class FeedbackWidget {
   private readonly onResize = () => this.clampToViewport();
 
   private onPointerDown(e: PointerEvent): void {
+    this.armIdleTimer();
     const handle = (e.target as Element).closest('[data-drag]');
     if (!handle || e.button !== 0) return;
     // Op de minimaliseerknop in de kop drukken is klikken, geen slepen.

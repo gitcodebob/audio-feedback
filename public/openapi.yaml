@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: audio-feedback
-  version: 0.4.0
+  version: 0.5.0
   description: |
     Ingesproken feedback op webapps. Meestal is dit allemaal geregeld door `widget.js`. Een
     app voegt alleen de scripttag toe en meldt eventueel met `AudioFeedback.event()` wat er
