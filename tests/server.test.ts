@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { audioFileName, eventsFileName, mp3FileName } from '../server/admin.ts';
 import { createApp, rateKey, type AppConfig } from '../server/app.ts';
 import { SiteStore } from '../server/sites.ts';
 import { Storage } from '../server/storage.ts';
@@ -521,7 +522,7 @@ describe('beheer', () => {
     const res = await fetch(url, { headers: AUTH });
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
-    assert.equal(res.headers.get('content-disposition'), `attachment; filename="meterkast-${m.id.slice(0, 8)}-events.json"`);
+    assert.equal(res.headers.get('content-disposition'), `attachment; filename="meterkast-${m.id.slice(0, 8)}.json"`);
     const doc = (await res.json()) as Record<string, unknown>;
     assert.equal(doc.id, m.id);
     assert.equal(doc.kenmerk, m.id.slice(0, 8));
@@ -535,7 +536,28 @@ describe('beheer', () => {
     for (const key of ['audioFile', 'sizeBytes', 'origin', 'timeline']) assert.ok(!(key in doc), key);
 
     const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
-    assert.ok(html.includes(`href="/api/recordings/${m.id}/events" download="meterkast-${m.id.slice(0, 8)}-events.json"`));
+    assert.ok(html.includes(`href="/api/recordings/${m.id}/events" download="meterkast-${m.id.slice(0, 8)}.json"`));
+  });
+
+  test('audio, mp3 en events van een opname heten hetzelfde, alleen de extensie verschilt', async () => {
+    const m = meta({ project: 'meterkast' });
+    await post(m);
+    const name = `meterkast-${m.id.slice(0, 8)}`;
+
+    const audio = await fetch(`${base}/api/recordings/${m.id}/audio`, { headers: AUTH });
+    assert.equal(audio.headers.get('content-disposition'), `inline; filename="${name}.webm"`);
+    const events = await fetch(`${base}/api/recordings/${m.id}/events`, { headers: AUTH });
+    assert.equal(events.headers.get('content-disposition'), `attachment; filename="${name}.json"`);
+
+    // En in de beheerpagina, waar de download-attributen de naam bepalen.
+    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    for (const [path, ext] of [['audio', 'webm'], ['audio.mp3', 'mp3'], ['events', 'json']]) {
+      assert.ok(html.includes(`href="/api/recordings/${m.id}/${path}" download="${name}.${ext}"`), `${path} → ${name}.${ext}`);
+    }
+
+    // Het formaat volgt wat de browser opnam; de basis blijft gelijk.
+    const record = { ...(await storage.get(m.id))!, audioFile: `${m.id}.m4a` };
+    assert.deepEqual([audioFileName(record), mp3FileName(record), eventsFileName(record)], [`${name}.m4a`, `${name}.mp3`, `${name}.json`]);
   });
 
   test('de beheerpagina escapet wat clients insturen', async () => {

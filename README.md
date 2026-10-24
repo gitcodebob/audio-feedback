@@ -235,13 +235,15 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
 | `GET /api/recordings[?project=]` | lijst als JSON |
-| `GET /api/recordings/:id/audio` | audio zoals opgenomen (WebM, Ogg of M4A), met Range-requests |
+| `GET /api/recordings/:id/audio` | audio zoals opgenomen (`<project>-<kenmerk>.webm`, `.ogg` of `.m4a`), met Range-requests |
 | `GET /api/recordings/:id/audio.mp3` | dezelfde audio als mp3-download (`<project>-<kenmerk>.mp3`), mono op 64 kbit/s, door ffmpeg omgezet terwijl het binnenkomt. Veel verwerkingstools lezen geen WebM met alleen audio, mp3 wel. Er is geen lengte vooraf en geen Range: dit is om te downloaden, niet om af te spelen. Zonder ffmpeg: 501. Te veel tegelijk: 503 met `Retry-After` |
-| `GET /api/recordings/:id/events` | de events van een opname als JSON-bestand (`<project>-<kenmerk>-events.json`), om te delen of verder te verwerken. Met project, start, duur, beginpagina, context en browser; elk event met `time` zoals de speler hem toont (`1:05`, `−0:03`). Bestandsnaam, grootte en origin van de opslag gaan niet mee |
+| `GET /api/recordings/:id/events` | de events van een opname als JSON-bestand (`<project>-<kenmerk>.json`), om te delen of verder te verwerken. Met project, start, duur, beginpagina, context en browser; elk event met `time` zoals de speler hem toont (`1:05`, `−0:03`). Bestandsnaam, grootte en origin van de opslag gaan niet mee |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
 | `GET /openapi.yaml` | OpenAPI-spec van de upload en het eventschema |
 | `GET /health` | `{ ok, version }` |
+
+Wat je van één opname downloadt heet hetzelfde, op de extensie na: `<project>-<kenmerk>.webm` (of `.ogg`, `.m4a`), `.mp3` en `.json`. Bij een verzameling op schaal in één map staan ze zo naast elkaar en vind je bij elkaar wat bij elkaar hoort. Het kenmerk is de eerste 8 tekens van het id, hetzelfde als dat de widget na het versturen toont.
 
 `/admin`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic
 auth: een willekeurige naam, en `ADMIN_PASSWORD` als wachtwoord.
