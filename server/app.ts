@@ -5,6 +5,7 @@
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
 //   GET  /api/recordings/:id/audio.mp3 als mp3 (ffmpeg) │
 //   GET  /api/recordings/:id/events  events als JSON    │
+//   GET  /api/recordings/:id/events.md events als Markdown │
 //   DELETE /api/recordings/:id       verwijderen        │
 //   GET  /admin                      luisterpagina      │
 //   GET  /admin/sites                sitebeheer         │
@@ -25,7 +26,7 @@ import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
-import { audioFileName, eventsDocument, eventsFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
+import { audioFileName, eventsDocument, eventsFileName, eventsMarkdown, eventsMarkdownFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
 import { Mp3Error, sendMp3 } from './mp3.ts';
 import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
@@ -461,18 +462,19 @@ export function createApp(config: AppConfig) {
           if (!record) return json(res, 404, { error: 'niet gevonden' });
           return await serveMp3(req, res, record);
         }
-        const events = /^\/api\/recordings\/([0-9a-f-]{36})\/events$/.exec(path);
+        const events = /^\/api\/recordings\/([0-9a-f-]{36})\/events(\.md)?$/.exec(path);
         if (events) {
           if (!requireAdmin(req, res)) return;
           const record = await storage.get(events[1]!);
           if (!record) return json(res, 404, { error: 'niet gevonden' });
-          // Ingesprongen: dit bestand is om te delen en te lezen, niet alleen voor een programma.
-          const data = JSON.stringify(eventsDocument(record), null, 2);
+          const markdown = events[2] !== undefined;
+          // JSON ingesprongen: dit bestand is om te delen en te lezen, niet alleen voor een programma.
+          const data = markdown ? eventsMarkdown(record) : JSON.stringify(eventsDocument(record), null, 2);
           res.writeHead(200, {
-            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json; charset=utf-8',
             'Content-Length': Buffer.byteLength(data),
             'Cache-Control': 'private, no-store',
-            'Content-Disposition': `attachment; filename="${eventsFileName(record)}"`,
+            'Content-Disposition': `attachment; filename="${markdown ? eventsMarkdownFileName(record) : eventsFileName(record)}"`,
           });
           return void res.end(data);
         }

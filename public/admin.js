@@ -1,4 +1,4 @@
-// Beheerpagina: naar een tijd springen en opnames verwijderen, en sites beheren.
+// Beheerpagina: naar een tijd springen, opnames verwijderen, downloadmenu's sluiten en sites beheren.
 
 // MediaRecorder-webm heeft geen duur in de header, en dan kan de browser niet
 // zoeken. Eén keer naar het einde springen laat hem de duur uitrekenen.
@@ -36,6 +36,23 @@ document.addEventListener('click', async (e) => {
     const res = await fetch(`/api/recordings/${del.dataset.delete}`, { method: 'DELETE' });
     if (res.ok) del.closest('.rec').remove();
     else alert('Verwijderen lukte niet.');
+  }
+});
+
+// --- downloadmenu's ---------------------------------------------------------
+
+// Een uitgeklapt menu gaat dicht bij een keuze, een klik ernaast of Escape.
+document.addEventListener('click', (e) => {
+  for (const menu of document.querySelectorAll('.split details[open]')) {
+    if (!menu.contains(e.target) || e.target.closest('.menu a')) menu.open = false;
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  for (const menu of document.querySelectorAll('.split details[open]')) {
+    menu.open = false;
+    menu.querySelector('summary').focus();
   }
 });
 
