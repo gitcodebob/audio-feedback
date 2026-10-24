@@ -1,15 +1,17 @@
-// Beheerpagina: per opname de audio, de pagina's die erbij open stonden (klik
-// op een tijd om daarheen te springen) en de context. Alle velden komen van
+// Beheerpagina: per opname de audio, de pagina's die erbij open stonden en wat de
+// app meldde (klik op een tijd om daarheen te springen) en de context. Alle velden komen van
 // clients en gaan dus door escape(); als link alleen http(s).
 
 import type { Site } from './sites.ts';
 import type { StoredRecording } from './storage.ts';
+import type { TimelineEntry } from '../widget/src/types.ts';
 
 function escape(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 function time(ms: number): string {
+  if (ms < 0) return `−${time(-ms)}`;
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -29,17 +31,32 @@ const TYPE_LABEL: Record<string, string> = {
   stop: 'einde',
 };
 
-function renderRecording(r: StoredRecording): string {
-  const timeline = r.timeline
-    .map((e) => `<tr>
-        <td><button class="seek" data-seek="${e.at}" title="Hier afspelen">${time(e.at)}</button></td>
-        <td>${TYPE_LABEL[e.type] ?? escape(e.type)}</td>
-        <td>${e.url ? link(e.url) : ''}${e.title ? `<div class="muted">${escape(e.title)}</div>` : ''}</td>
-      </tr>`)
-    .join('');
-  const context = Object.entries(r.context)
+function tags(values: Record<string, string> | undefined): string {
+  return Object.entries(values ?? {})
     .map(([k, v]) => `<span class="tag">${escape(k)}: ${escape(v)}</span>`)
     .join(' ');
+}
+
+function seekButton(at: number): string {
+  // Van vóór de start: daar is geen audio van, dus vanaf het begin afspelen.
+  return at < 0
+    ? `<button class="seek before" data-seek="0" title="Vóór de opname; afspelen vanaf het begin">${time(at)}</button>`
+    : `<button class="seek" data-seek="${at}" title="Hier afspelen">${time(at)}</button>`;
+}
+
+function renderEntry(e: TimelineEntry): string {
+  const what = TYPE_LABEL[e.type] ?? `<span class="tag app">${escape(e.type)}</span>`;
+  const data = tags(e.data);
+  return `<tr>
+        <td>${seekButton(e.at)}</td>
+        <td>${what}</td>
+        <td>${e.label ? escape(e.label) : ''}${e.url ? link(e.url) : ''}${e.title ? `<div class="muted">${escape(e.title)}</div>` : ''}${data ? `<div>${data}</div>` : ''}</td>
+      </tr>`;
+}
+
+function renderRecording(r: StoredRecording): string {
+  const timeline = r.timeline.map(renderEntry).join('');
+  const context = tags(r.context);
   return `<article class="rec" id="r-${r.id}">
     <header>
       <strong>${escape(r.project)}</strong>
@@ -82,8 +99,10 @@ const STYLE = `
   .small { font-size: 12px; }
   .tag { display: inline-block; font-size: 12px; background: #eef0f2; border-radius: 4px; padding: 1px 6px; }
   .tag.warn { background: #fff1d6; }
+  .tag.app { background: #242f36; color: #fff; }
   button { font: inherit; cursor: pointer; }
   .seek { border: 0; background: #f8e800; color: #242f36; border-radius: 999px; padding: 1px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .seek.before { background: #eef0f2; }
   .delete { border: 0; background: #f6f8fa; color: #d0021b; border-radius: 999px; padding: 4px 12px; }
   .delete:hover { background: #d0021b; color: #fff; }
   .empty { margin-top: 24px; color: #77818b; }

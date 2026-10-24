@@ -1,0 +1,222 @@
+openapi: 3.1.0
+info:
+  title: audio-feedback
+  version: 0.4.0
+  description: |
+    Ingesproken feedback op webapps. Meestal is dit allemaal geregeld door `widget.js`. Een
+    app voegt alleen de scripttag toe en meldt eventueel met `AudioFeedback.event()` wat er
+    gebeurt. Deze spec is bedoeld voor wie een eigen client bouwt, en legt vast wat er in een
+    opname meegaat, waaronder het eventschema (`TimelineEntry`).
+
+    ## Events uit de app
+
+    De app geeft events door aan de widget, in de browser. Die events gaan pas naar de server
+    als de gebruiker een opname verstuurt, als onderdeel van `meta.timeline`:
+
+    ```js
+    window.AudioFeedback?.event('level', 'Nuuk', { moeilijkheid: 'zwaar' });
+    ```
+
+    - Tijdens een opname krijgt een event zijn positie in de opname (`at`).
+    - Daarbuiten bewaart de widget alleen in het geheugen de events van de laatste 30 seconden
+      (hooguit 50). Drukt de gebruiker op Opnemen, dan gaan die mee met een negatieve `at`.
+    - Paginawissels zijn events van hetzelfde schema, met type `navigate`. De widget legt die
+      zelf vast.
+    - De gebruiker ziet bij het terugluisteren wat er meegaat.
+servers:
+  - url: https://audio-feedback.hetzner.bobreijnders.nl
+# Geen sleutel: de server kijkt naar de Origin (zie /admin/sites).
+security: []
+paths:
+  /api/recordings:
+    post:
+      operationId: uploadRecording
+      summary: Een opname versturen
+      description: |
+        Multipart zonder eigen headers, dus zonder CORS-preflight. De `Origin` moet in
+        `/admin/sites` staan en het project moet bij die site horen. Wat er van een URL
+        bewaard blijft, bepaalt de site-instelling. De server past die ook toe op wat de
+        client al heeft opgeschoond. Opnieuw versturen met hetzelfde `id` is veilig.
+      parameters:
+        - in: header
+          name: Origin
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [meta, audio]
+              properties:
+                meta:
+                  description: JSON-tekst volgens `RecordingMeta`.
+                  type: string
+                  contentMediaType: application/json
+                  contentSchema: { $ref: '#/components/schemas/RecordingMeta' }
+                audio:
+                  description: Opus in WebM of Ogg, of AAC in MP4. De server herkent het formaat aan de eerste bytes.
+                  type: string
+                  contentMediaType: audio/*
+      responses:
+        '201':
+          description: Opgeslagen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '200':
+          description: Deze opname was er al (zelfde `id`)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Receipt'
+                  - type: object
+                    properties:
+                      duplicate: { const: true }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503':
+          description: Te veel uploads tegelijk; probeer het na `Retry-After` seconden opnieuw
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '507': { $ref: '#/components/responses/Error' }
+  /api/sites/config:
+    get:
+      operationId: getSiteConfig
+      summary: Wat er van een adres bewaard blijft, voor de site die het vraagt
+      description: Op basis van de `Origin`. De widget vraagt dit bij elke start van een opname.
+      parameters:
+        - in: header
+          name: Origin
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: De instelling uit `/admin/sites`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UrlOptions' }
+        '403': { $ref: '#/components/responses/Error' }
+components:
+  responses:
+    Error:
+      description: Geweigerd, met een leesbare reden
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Receipt:
+      type: object
+      required: [id, retentionDays]
+      properties:
+        id: { type: string, format: uuid }
+        retentionDays:
+          type: integer
+          description: Hoe lang de server de opname bewaart; 0 is onbeperkt.
+    UrlOptions:
+      type: object
+      required: [stripQuery, stripHash, keepParams]
+      properties:
+        stripQuery: { type: boolean }
+        stripHash: { type: boolean }
+        keepParams:
+          type: array
+          items: { type: string }
+          description: Queryparameters die ook met `stripQuery` blijven staan.
+    RecordingMeta:
+      type: object
+      required: [id, project, url, mimeType]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Door de client gekozen; maakt opnieuw versturen veilig.
+        project:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'
+        startedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
+          minimum: 0
+          maximum: 7200000
+        mimeType:
+          type: string
+          examples: ['audio/webm;codecs=opus', 'audio/mp4']
+        url:
+          type: string
+          format: uri
+          description: De pagina waar de opname begon (http of https).
+        title: { type: string, maxLength: 300 }
+        timeline:
+          type: array
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/TimelineEntry' }
+        context:
+          type: object
+          maxProperties: 50
+          additionalProperties: { type: string, maxLength: 1000 }
+          description: Vrije sleutel-waardeparen van de app, zoals versie of omgeving.
+        client:
+          type: object
+          properties:
+            userAgent: { type: string, maxLength: 500 }
+            language: { type: string, maxLength: 35 }
+            viewport:
+              type: object
+              properties:
+                width: { type: integer }
+                height: { type: integer }
+            widgetVersion: { type: string, maxLength: 20 }
+        recovered:
+          type: boolean
+          description: Teruggehaald na een afgebroken sessie (herladen, crash).
+    TimelineEntry:
+      description: |
+        Eén event in de opname. De widget legt `start`, `navigate`, `pause`, `resume` en `stop`
+        zelf vast. Alle andere types komen van de app. Per opname gaan er hooguit 500 events
+        van de app mee. Wat niet aan dit schema voldoet, laat de server weg.
+      type: object
+      required: [at, type]
+      properties:
+        at:
+          type: integer
+          minimum: -30000
+          maximum: 7200000
+          description: |
+            Positie in de opname in ms, waarbij pauzes niet meetellen. Negatief betekent zoveel ms
+            vóór de start (de buffer).
+        type:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9._:-]{0,49}$'
+          examples: [navigate, screen, level, error]
+        url:
+          type: string
+          format: uri
+          description: Bij `start` en `navigate`. Opgeschoond volgens `UrlOptions`.
+        title: { type: string, maxLength: 300 }
+        label:
+          type: string
+          maxLength: 200
+          description: Korte omschrijving voor de beheerpagina.
+          examples: ['Level 3: Nuuk']
+        data:
+          type: object
+          maxProperties: 20
+          propertyNames: { maxLength: 50 }
+          additionalProperties: { type: string, maxLength: 500 }
+          description: Vrije sleutel-waardeparen van de app. Getallen en booleans worden tekst.

@@ -49,6 +49,8 @@ const hosts: Host[] = [
       const vis = (id: string) => document.getElementById(id)?.checkVisibility() ?? false;
       return `titel ${vis('start') ? 'zichtbaar' : 'weg'}, ranglijst ${vis('ranglijst') ? 'zichtbaar' : 'weg'}`;
     }),
+    // Het spel zelf verandert de URL nooit; dit bootst een wissel na. Schermen en levels
+    // komen alleen in de tijdlijn als het spel AudioFeedback.event() aanroept.
     navigate: async (page) => {
       await page.evaluate(() => (location.hash = '#proef'));
     },
