@@ -1,13 +1,13 @@
 // Alles in meta komt van een willekeurige browser. We nemen alleen over wat we
 // kennen, in de vorm die we verwachten, en kappen lange strings af.
 
+import { BUFFER_MS, cleanData, EVENT_TYPE, isWidgetType, MAX_APP_EVENTS, MAX_LABEL } from '../widget/src/events.ts';
 import type { RecordingMeta, TimelineEntry } from '../widget/src/types.ts';
 
 export class ValidationError extends Error {}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PROJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const TIMELINE_TYPES = new Set<TimelineEntry['type']>(['start', 'navigate', 'pause', 'resume', 'stop']);
 const MAX_DURATION_MS = 2 * 60 * 60 * 1000;
 
 export const AUDIO_TYPES: Record<string, { ext: string; contentType: string }> = {
@@ -68,14 +68,20 @@ export function parseMeta(raw: unknown): RecordingMeta {
   if (!baseAudioType(mimeType)) throw new ValidationError('onbekend audioformaat');
 
   const startedAt = new Date(str(m.startedAt, 40));
+  let appEvents = 0;
   const timeline: TimelineEntry[] = (Array.isArray(m.timeline) ? m.timeline : [])
     .slice(0, 2000)
-    .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && TIMELINE_TYPES.has(e.type as TimelineEntry['type']))
+    .filter((e): e is Record<string, unknown> => !!e && typeof e === 'object' && typeof e.type === 'string' && EVENT_TYPE.test(e.type))
+    .filter((e) => isWidgetType(e.type as string) || ++appEvents <= MAX_APP_EVENTS)
     .map((e) => {
-      const entry: TimelineEntry = { at: num(e.at, 0, MAX_DURATION_MS), type: e.type as TimelineEntry['type'] };
+      // Negatief is van vóór de start: de buffer van de laatste halve minuut.
+      const entry: TimelineEntry = { at: num(e.at, -BUFFER_MS, MAX_DURATION_MS), type: e.type as string };
       const u = httpUrl(e.url);
       if (u) entry.url = u;
       if (typeof e.title === 'string') entry.title = str(e.title, 300);
+      if (typeof e.label === 'string' && e.label) entry.label = str(e.label, MAX_LABEL);
+      const data = cleanData(e.data);
+      if (data) entry.data = data;
       return entry;
     });
 

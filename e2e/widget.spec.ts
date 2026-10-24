@@ -22,7 +22,14 @@ interface Recording {
   sizeBytes: number;
   audioType: string;
   context: Record<string, string>;
-  timeline: { at: number; type: string; url?: string }[];
+  timeline: { at: number; type: string; url?: string; label?: string; data?: Record<string, string> }[];
+}
+
+type EventFn = (type: string, label?: string, data?: Record<string, string | number | boolean>) => void;
+
+/** AudioFeedback.event() in de pagina, zoals een app het aanroept. */
+function appEvent(page: Page, ...args: Parameters<EventFn>): Promise<void> {
+  return page.evaluate((a) => (window as unknown as { AudioFeedback: { event: EventFn } }).AudioFeedback.event(...a), args);
 }
 
 function hostPage(attrs = ''): string {
@@ -168,6 +175,7 @@ test('standaard gaan query en hash niet mee; het bedankje noemt kenmerk en bewaa
   await button(page, 'Stoppen').click();
   await expect(widget(page).getByRole('list', { name: /Pagina/ })).not.toContainText('geheim');
   await button(page, 'Versturen').click();
+  await expect(widget(page).getByText('Bedankt! Je feedback is verstuurd.')).toBeVisible();
 
   const [rec] = await recordings(page);
   expect(rec!.url).toBe(`http://localhost:${HOST_PORT}/host/start`);
@@ -175,9 +183,56 @@ test('standaard gaan query en hash niet mee; het bedankje noemt kenmerk en bewaa
     `http://localhost:${HOST_PORT}/host/start`,
     `http://localhost:${HOST_PORT}/host/herstel`,
   ]);
-  await expect(widget(page).getByText('Bedankt! Je feedback is verstuurd.')).toBeVisible();
   await expect(widget(page).getByText(`Kenmerk ${rec!.id.slice(0, 8)}`)).toBeVisible();
   await expect(widget(page).getByText('We bewaren hem 90 dagen.')).toBeVisible();
+});
+
+test('events van de app gaan mee, met de halve minuut vóór Opnemen', async ({ page }) => {
+  const warnings: string[] = [];
+  page.on('console', (m) => void (m.type() === 'warning' && warnings.push(m.text())));
+  serveHost();
+  await page.goto('/host/start');
+  await expect(widget(page).getByText('Vertel wat je ziet of ervaart')).toBeVisible();
+  await expect(widget(page).getByText('wat je in de app doet')).toHaveCount(0);
+
+  // Vóór de opname: in de buffer, net als een paginawissel.
+  await appEvent(page, 'level', 'Nuuk', { golf: 2 });
+  await appEvent(page, 'navigate', 'mag niet: type van de widget');
+  await expect(widget(page).getByText('wat je in de app doet')).toBeVisible();
+  await page.locator('#spa').click();
+  await page.waitForTimeout(1300);
+
+  await button(page, 'Opnemen').click();
+  await expect(button(page, 'Pauzeren')).toBeVisible();
+  await page.waitForTimeout(800);
+  await appEvent(page, 'screen', 'Pauzemenu');
+  await button(page, 'Pauzeren').click();
+  await appEvent(page, 'screen', 'Opties');
+  await button(page, 'Hervatten').click();
+  await page.waitForTimeout(500);
+  await button(page, 'Stoppen').click();
+
+  // De gebruiker ziet vóór het versturen wat de app gemeld heeft.
+  const listed = widget(page).getByRole('list', { name: /Gebeurtenissen uit de app/ });
+  await expect(listed).toContainText('level: Nuuk');
+  await expect(listed).toContainText('screen: Opties');
+  await expect(widget(page).getByRole('list', { name: /Pagina/ })).toContainText('/host/instellingen');
+  await button(page, 'Versturen').click();
+  await expect(widget(page).getByText('Bedankt! Je feedback is verstuurd.')).toBeVisible();
+
+  const [rec] = await recordings(page);
+  expect(rec!.timeline.map((e) => e.type)).toEqual(['level', 'navigate', 'start', 'screen', 'pause', 'screen', 'resume', 'stop']);
+  const [level, nav, , menu, pause, options] = rec!.timeline;
+  expect(level).toMatchObject({ type: 'level', label: 'Nuuk', data: { golf: '2' } });
+  // Van vóór de start: negatief, de wissel daarna dichter bij 0.
+  expect(level!.at).toBeLessThan(-1000);
+  expect(nav!.at).toBeGreaterThan(level!.at);
+  expect(nav!.at).toBeLessThanOrEqual(0);
+  expect(nav!.url).toBe(`http://localhost:${HOST_PORT}/host/instellingen`);
+  expect(menu!.at).toBeGreaterThan(500);
+  // In een pauze ligt een event op het punt waar de opname stilstaat.
+  expect(options!.at).toBe(pause!.at);
+  expect(warnings.some((w) => w.includes('"navigate" is van de widget zelf'))).toBe(true);
 });
 
 test('in /admin/sites ingesteld, geldt meteen bij de volgende opname', async ({ browser, page }) => {

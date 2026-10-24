@@ -3,6 +3,8 @@
 // Een opname die nog niet verstuurd is (mislukte upload, of een pagina die
 // tijdens het opnemen werd verlaten) komt bij het laden terug als "pending".
 
+import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from './clean-url.ts';
+import { EventBuffer, isWidgetType, MAX_APP_EVENTS, type PendingEntry } from './events.ts';
 import { PageTracker } from './page-tracker.ts';
 import { Recorder, RecorderError } from './recorder.ts';
 import { SessionStore, type StoredSession } from './store.ts';
@@ -10,7 +12,7 @@ import { css, FONT_FAMILY } from './styles.ts';
 import type { RecordingMeta, TimelineEntry } from './types.ts';
 import { siteUrlOptions, upload, UploadError } from './upload.ts';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 export type Corner = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 
@@ -117,7 +119,15 @@ export class FeedbackWidget {
   private readonly root: ShadowRoot;
   private readonly store = new SessionStore();
   private recorder: Recorder | null = null;
-  private tracker: PageTracker | null = null;
+  private readonly tracker: PageTracker;
+  /** Events van buiten een opname; bij Opnemen gaat de laatste halve minuut mee. */
+  private readonly events: EventBuffer;
+  /** Wat er van een adres bewaard blijft; opgehaald bij Opnemen. */
+  private urlOptions: UrlOptions | null = null;
+  /** Het laatst vastgelegde adres, na opschonen: een wissel die alleen weggelaten delen raakt, telt niet. */
+  private lastUrl = '';
+  private appEvents = 0;
+  private dropWarned = false;
   private view: View = { name: 'idle' };
   private minimized: boolean;
   private session: StoredSession | null = null;
@@ -133,8 +143,9 @@ export class FeedbackWidget {
   private readonly config: WidgetConfig;
   private releaseLock: (() => void) | null = null;
 
-  constructor(config: WidgetConfig) {
+  constructor(config: WidgetConfig, events = new EventBuffer()) {
     this.config = config;
+    this.events = events;
     this.context = { ...config.context };
     this.storageKey = `audio-feedback:${config.project}`;
     this.minimized = this.loadPref('minimized') ?? config.startMinimized;
@@ -156,6 +167,8 @@ export class FeedbackWidget {
     this.applyAnchor(this.loadPref<Anchor>('anchor') ?? this.defaultAnchor());
     window.addEventListener('resize', this.onResize);
     window.addEventListener('beforeunload', this.onBeforeUnload);
+    this.tracker = new PageTracker((url, title) => this.record({ type: 'navigate', url, title }));
+    this.tracker.start();
     this.render();
     void this.checkPending();
     // Bij een herlaadactie kan de lock van de vorige pagina er net nog zijn.
@@ -164,6 +177,15 @@ export class FeedbackWidget {
 
   setContext(values: Record<string, string>): void {
     Object.assign(this.context, values);
+  }
+
+  /** Een event van de app, al gecontroleerd door appEvent(). */
+  event(entry: PendingEntry): void {
+    const first = !this.events.fromApp;
+    this.events.fromApp = true;
+    this.record(entry);
+    // Het kaartje zegt vooraf wat er meegaat; nu hoort daar ook de app bij.
+    if (first && this.view.name === 'idle') this.render();
   }
 
   open(): void {
@@ -186,7 +208,7 @@ export class FeedbackWidget {
 
   destroy(): void {
     void this.recorder?.stop();
-    this.tracker?.stop();
+    this.tracker.stop();
     window.clearInterval(this.ticker);
     window.clearTimeout(this.sentTimer);
     window.removeEventListener('resize', this.onResize);
@@ -303,17 +325,18 @@ export class FeedbackWidget {
       },
       recovered: false,
     };
+    // Vanaf hier krijgt elk event een plek in deze opname; eerst wat er in de buffer zat.
+    this.urlOptions = urlOptions;
+    this.lastUrl = '';
+    this.appEvents = 0;
+    this.dropWarned = false;
     this.session = { meta, status: 'recording', heartbeat: Date.now() };
+    for (const entry of this.events.take()) this.place(entry);
+    meta.url = cleanUrl(location.href, urlOptions);
+    this.lastUrl = meta.url;
+    meta.timeline.push({ at: 0, type: 'start', url: meta.url, title: meta.title });
     const release = await this.claim(meta.id);
     if (release) this.hold(release);
-    this.tracker = new PageTracker(
-      urlOptions,
-      () => recorder.elapsedMs(),
-      (entry) => this.addTimeline(entry),
-    );
-    meta.url = this.tracker.currentUrl();
-    meta.timeline.push({ at: 0, type: 'start', url: meta.url, title: meta.title });
-    this.tracker.start();
 
     recorder.onChunk = (chunk) => {
       this.chunks.push(chunk);
@@ -330,23 +353,49 @@ export class FeedbackWidget {
     this.setView({ name: 'recording' });
   }
 
-  private addTimeline(entry: TimelineEntry): void {
-    if (!this.session) return;
-    this.session.meta.timeline.push(entry);
-    void this.store.putSession(this.session).catch(() => {});
+  /**
+   * Eén weg voor elk event, van de widget of van de app. Loopt er een opname, dan krijgt
+   * het de positie daarin; anders gaat het in de buffer, voor als de gebruiker zo opneemt.
+   */
+  private record(entry: PendingEntry): void {
+    const recorder = this.recorder;
+    if (!recorder || !this.session) return this.events.push(entry);
+    if (this.place({ ...entry, at: recorder.elapsedMs() })) {
+      void this.store.putSession(this.session).catch(() => {});
+    }
+  }
+
+  /** Zet een event in de lopende opname, met het adres opgeschoond. False als het niet meegaat. */
+  private place(entry: TimelineEntry): boolean {
+    const session = this.session;
+    if (!session) return false;
+    if (entry.url !== undefined) {
+      const url = cleanUrl(entry.url, this.urlOptions ?? STRICT_URL_OPTIONS);
+      if (entry.type === 'navigate' && url === this.lastUrl) return false;
+      this.lastUrl = url;
+      entry = { ...entry, url };
+      if (!url) delete entry.url;
+    }
+    if (!isWidgetType(entry.type) && ++this.appEvents > MAX_APP_EVENTS) {
+      if (!this.dropWarned) console.warn(`[audio-feedback] meer dan ${MAX_APP_EVENTS} events in deze opname; de rest gaat niet mee`);
+      this.dropWarned = true;
+      return false;
+    }
+    session.meta.timeline.push(entry);
+    return true;
   }
 
   private pause(): void {
     if (!this.recorder) return;
     this.recorder.pause();
-    this.addTimeline({ at: this.recorder.elapsedMs(), type: 'pause' });
+    this.record({ type: 'pause' });
     this.setView({ name: 'paused' });
   }
 
   private resume(): void {
     if (!this.recorder) return;
     this.recorder.resume();
-    this.addTimeline({ at: this.recorder.elapsedMs(), type: 'resume' });
+    this.record({ type: 'resume' });
     this.setView({ name: 'recording' });
   }
 
@@ -355,8 +404,6 @@ export class FeedbackWidget {
     const session = this.session;
     if (!recorder || !session) return;
     window.clearInterval(this.ticker);
-    this.tracker?.stop();
-    this.tracker = null;
     await recorder.stop();
     this.recorder = null;
     session.meta.durationMs = recorder.elapsedMs();
@@ -392,8 +439,6 @@ export class FeedbackWidget {
   private async stopRecorder(): Promise<void> {
     if (!this.recorder) return;
     window.clearInterval(this.ticker);
-    this.tracker?.stop();
-    this.tracker = null;
     await this.recorder.stop();
     this.recorder = null;
   }
@@ -497,7 +542,10 @@ export class FeedbackWidget {
         const privacy = this.config.privacyUrl
           ? ` <a href="${escapeHtml(this.config.privacyUrl)}" target="_blank" rel="noopener noreferrer">Hoe we hiermee omgaan</a>`
           : '';
-        return `<p class="text">Vertel wat je ziet of ervaart. Met je opname sturen we het adres en de titel mee van de pagina's die je bekijkt, en welke browser je gebruikt. Niet wat er op je scherm staat.${privacy}</p>
+        const what = this.events.fromApp
+          ? `welke pagina's je bekijkt en wat je in de app doet, zoals het scherm dat open staat`
+          : `het adres en de titel van de pagina's die je bekijkt`;
+        return `<p class="text">Vertel wat je ziet of ervaart. Met je opname sturen we mee: ${what} (ook in de halve minuut voordat je op Opnemen drukt), en welke browser je gebruikt. Niet wat er op je scherm staat.${privacy}</p>
           <div class="row"><button class="record" data-action="record" data-autofocus>${icons.mic}Opnemen</button></div>`;
       }
       case 'starting':
@@ -526,6 +574,7 @@ export class FeedbackWidget {
         return `${intro}
           <audio controls preload="metadata"></audio>
           ${this.renderPages()}
+          ${this.renderAppEvents()}
           <div class="row">
             <button class="ghost" data-action="discard">Weggooien</button>
             <button class="primary" data-action="send" data-autofocus>Versturen</button>
@@ -560,6 +609,16 @@ export class FeedbackWidget {
     const shown = urls.slice(0, 3).map((u) => `<li title="${escapeHtml(u)}">${escapeHtml(shortUrl(u))}</li>`).join('');
     const more = urls.length > 3 ? `<li>en ${urls.length - 3} meer</li>` : '';
     return `<ul class="pages" aria-label="Pagina's die worden meegestuurd">${shown}${more}</ul>`;
+  }
+
+  /** Wat de app gemeld heeft, zodat de gebruiker ook dat ziet vóór het versturen. */
+  private renderAppEvents(): string {
+    const events = (this.session?.meta.timeline ?? []).filter((e) => !isWidgetType(e.type));
+    if (events.length === 0) return '';
+    const text = (e: TimelineEntry) => (e.label ? `${e.type}: ${e.label}` : e.type);
+    const shown = events.slice(-3).map((e) => `<li title="${escapeHtml(text(e))}">${escapeHtml(text(e))}</li>`).join('');
+    const more = events.length > 3 ? `<li>en ${events.length - 3} eerder</li>` : '';
+    return `<ul class="pages" aria-label="Gebeurtenissen uit de app die worden meegestuurd">${more}${shown}</ul>`;
   }
 
   private onClick(e: MouseEvent): void {

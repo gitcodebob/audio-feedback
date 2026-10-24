@@ -30,11 +30,17 @@
   <p>Dit is een nep-SPA: de links hierboven veranderen de URL zonder te herladen.
     Neem rechtsonder iets op, klik ondertussen rond, en kijk daarna in <a href="/admin">/admin</a>
     welke pagina's er bij de opname zijn vastgelegd.</p>
+  <p>Schermen zonder eigen URL meldt de app zelf, met <code>AudioFeedback.event()</code>.
+    Probeer het, ook vlak vóór je op Opnemen drukt:
+    <button type="button" data-event="screen" data-label="Dialoog: opslaan">Dialoog openen</button>
+    <button type="button" data-event="error" data-label="Opslaan mislukt">Fout tonen</button></p>
   <p>In je eigen app is dit alles wat nodig is:</p>
   <pre id="snippet"></pre>
 </main>
 <script>
   document.addEventListener('click', (e) => {
+    const ev = e.target.closest('[data-event]');
+    if (ev) window.AudioFeedback?.event(ev.dataset.event, ev.dataset.label);
     const a = e.target.closest('a[data-spa]');
     if (!a) return;
     e.preventDefault();
