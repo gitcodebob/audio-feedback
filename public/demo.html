@@ -13,6 +13,12 @@
   nav a:hover { color: #f8e800; }
   main { max-width: 720px; padding: 24px; }
   code { background: #eaedf0; padding: 1px 4px; border-radius: 4px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* Zoals de knoppen in de widget: donkerblauw, en bij hover vult het geel van onder naar boven. */
+  button { font: 500 14px/1 Montserrat, system-ui, sans-serif; min-height: 40px; padding: 8px 18px; border: 0; border-radius: 999px; cursor: pointer; color: #fff;
+    background: linear-gradient(to top, #f8e800 50%, #242f36 50%) top / 100% 200% no-repeat; transition: background-position 0.25s ease-in-out, color 0.2s ease-in; }
+  button:hover { background-position: bottom; color: #242f36; }
+  button:focus-visible { outline: 2px solid #242f36; outline-offset: 2px; }
   pre { background: #fff; box-shadow: 1px 10px 40px #0000001f; padding: 12px; border-radius: 8px; overflow: auto; }
 </style>
 </head>
@@ -31,9 +37,11 @@
     Neem rechtsonder iets op, klik ondertussen rond, en kijk daarna in <a href="/admin">/admin</a>
     welke pagina's er bij de opname zijn vastgelegd.</p>
   <p>Schermen zonder eigen URL meldt de app zelf, met <code>AudioFeedback.event()</code>.
-    Probeer het, ook vlak vóór je op Opnemen drukt:
+    Probeer het, ook vlak vóór je op Opnemen drukt:</p>
+  <p class="actions">
     <button type="button" data-event="screen" data-label="Dialoog: opslaan">Dialoog openen</button>
-    <button type="button" data-event="error" data-label="Opslaan mislukt">Fout tonen</button></p>
+    <button type="button" data-event="error" data-label="Opslaan mislukt">Fout tonen</button>
+  </p>
   <p>In je eigen app is dit alles wat nodig is:</p>
   <pre id="snippet"></pre>
 </main>
