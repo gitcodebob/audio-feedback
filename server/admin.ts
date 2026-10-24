@@ -3,6 +3,7 @@
 // clients en gaan dus door escape(); als link alleen http(s). Plus de events van een opname
 // als JSON-download, om te delen of verder te verwerken.
 
+import { extname } from 'node:path';
 import type { Site } from './sites.ts';
 import type { StoredRecording } from './storage.ts';
 import type { TimelineEntry } from '../widget/src/types.ts';
@@ -76,13 +77,26 @@ export function eventsDocument(r: StoredRecording) {
   };
 }
 
-export function eventsFileName(r: StoredRecording): string {
-  return `${r.project}-${r.id.slice(0, 8)}-events.json`;
+/**
+ * Elk bestand dat je van een opname haalt heet hetzelfde en verschilt alleen in extensie:
+ * project en kenmerk. Zo staan audio, mp3 en events bij een verzameling op schaal in één
+ * map naast elkaar, en vind je bij elkaar wat bij elkaar hoort.
+ */
+function downloadBase(r: StoredRecording): string {
+  return `${r.project}-${r.id.slice(0, 8)}`;
 }
 
-/** Zoals de events: wie het downloadt en doorstuurt, herkent het aan project en kenmerk. */
+/** De audio zoals opgenomen: .webm, .ogg of .m4a, naar wat de browser opnam. */
+export function audioFileName(r: StoredRecording): string {
+  return `${downloadBase(r)}${extname(r.audioFile)}`;
+}
+
+export function eventsFileName(r: StoredRecording): string {
+  return `${downloadBase(r)}.json`;
+}
+
 export function mp3FileName(r: StoredRecording): string {
-  return `${r.project}-${r.id.slice(0, 8)}.mp3`;
+  return `${downloadBase(r)}.mp3`;
 }
 
 function renderRecording(r: StoredRecording): string {
@@ -94,7 +108,7 @@ function renderRecording(r: StoredRecording): string {
       <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
       ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
       <span class="spacer"></span>
-      <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}" title="Audio downloaden zoals opgenomen">audio</a>
+      <a href="/api/recordings/${r.id}/audio" download="${escape(audioFileName(r))}" title="Audio downloaden zoals opgenomen">audio</a>
       <a href="/api/recordings/${r.id}/audio.mp3" download="${escape(mp3FileName(r))}" title="Audio als mp3, voor tools die geen WebM lezen">mp3</a>
       <a href="/api/recordings/${r.id}/events" download="${escape(eventsFileName(r))}" title="Events en gegevens van de opname als JSON">events</a>
       <button class="delete" data-delete="${r.id}">verwijderen</button>

@@ -25,7 +25,7 @@ import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
-import { eventsDocument, eventsFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
+import { audioFileName, eventsDocument, eventsFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
 import { Mp3Error, sendMp3 } from './mp3.ts';
 import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
@@ -318,7 +318,7 @@ export function createApp(config: AppConfig) {
       'Content-Type': record.audioType,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'private, no-store',
-      'Content-Disposition': `inline; filename="${record.audioFile}"`,
+      'Content-Disposition': `inline; filename="${audioFileName(record)}"`,
     };
     if (range && (range[1] || range[2])) {
       let start = range[1] ? Number(range[1]) : size - Number(range[2]);
