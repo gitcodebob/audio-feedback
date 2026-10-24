@@ -9,7 +9,39 @@ adres van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 ```
 
 Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
-31 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
+33 kB groot (ongecomprimeerd), plus Montserrat (38 kB, van onze eigen server) en raakt de CSS en de sneltoetsen van de app niet.
+
+## Inbouwen in je app
+
+1. **Laat je site toe.** Voeg in [`/admin/sites`](#sites-beheren) de origin en de projectnaam van
+   je app toe. Kies welke queryparameters en of de hash mee mogen. Standaard gaat alleen het pad
+   mee. Zonder deze stap weigert de server je opnames.
+2. **Zet de scripttag in `index.html`**, vóór het script van je app:
+   ```html
+   <script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js"
+     data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
+   ```
+   Paginawissels (`pushState`, hash, gewone links) volgt de widget zelf.
+3. **Meld wat niet in de URL staat**, zoals schermen, dialogen, levels, modi en fouten:
+   ```js
+   window.AudioFeedback?.event('screen', 'Instellingen');
+   window.AudioFeedback?.event('level', 'Level 3: Nuuk', { moeilijkheid: 'zwaar' });
+   window.AudioFeedback?.event('error', 'Opslaan mislukt', { status: 500 });
+   ```
+   - Roep het aan op het moment dat het scherm of de toestand wisselt, niet per frame of
+     per toetsaanslag.
+   - `type` is een vaste, korte naam om op te filteren. `label` is wat een mens in `/admin`
+     leest. In `data` horen een paar losse velden.
+   - Geen persoonsgegevens, tokens of ingevoerde tekst. Alles wat je meldt, gaat met de opname mee.
+   - Schrijf `?.`: zonder widget (tests, localhost) doet de aanroep dan niets.
+4. **Heeft je app een login, roep dan bij uitloggen `AudioFeedback.clear()` aan**, zodat de
+   volgende gebruiker geen opname van een ander aangeboden krijgt.
+5. **Controleer het resultaat.** Klik rond, neem iets op, verstuur het, en kijk in
+   [`/admin`](#server) of de pagina's en events in de tijdlijn staan.
+
+Er gaat niets naar de server tot de gebruiker op **Versturen** drukt. Events van de halve minuut
+vóór **Opnemen** gaan ook mee. Meer opties staan bij [Integreren](#integreren) en
+[Events uit de app](#events-uit-de-app).
 
 ## Voorstel
 
@@ -31,7 +63,7 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
 |---|---|
 | audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut |
 | `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Per site in te stellen in [`/admin/sites`](#sites-beheren) |
-| `timeline` | elke pagina-wissel tijdens de opname (`pushState`, gewone navigatie, en de hash als die meegaat), plus pauze en hervat, met de positie in de opname. In de beheerpagina klik je op een tijd en hoor je wat er bij die pagina gezegd werd |
+| `timeline` | events met hun positie in de opname. Dat zijn de paginawissels (`pushState`, gewone navigatie, en de hash als die meegaat), pauze en hervat, en wat de app met [`AudioFeedback.event()`](#events-uit-de-app) meldt. Ook de events van de halve minuut vóór **Opnemen** gaan mee, met een negatieve tijd. In de beheerpagina klik je op een tijd en hoor je wat er op dat moment gezegd werd |
 | `context` | vrije sleutel-waardeparen van de app zelf, bijvoorbeeld versie of omgeving |
 | `client` | user agent, taal, venstergrootte |
 
@@ -81,17 +113,20 @@ er bij de server aankomt.
 |---|---|---|---|
 | geproefd op | live site | live site | lokale build, ingelogd, met een nieuw ontwerp |
 | CSP / Permissions-Policy | geen (alleen de headers van de host-Caddy) | geen | geen |
-| URL-wissels | `?quality=`, `/editor`, `#level` | `?proef=` | hash-routes `#/ontwerp/<id>/<tab>` |
-| in de tijdlijn | ✔ | ✔ | ✔ elke tabwissel |
+| URL-wissels | alleen in de editor (`/editor#<tab>`). Het spel zelf verandert de URL nooit | `?proef=` | hash-routes `#/ontwerp/<id>/<tab>` |
+| in de tijdlijn | editor ✔. Spel: alleen met `AudioFeedback.event()` | ✔ | ✔ elke tabwissel |
 | toetsen lekken niet | ✔ spatie, Enter, Escape, Ctrl+Z bereiken het spel niet. Tegenproef: dezelfde Escape buiten het kaartje sluit de ranglijst wel | ✔ Ctrl+Z/Y bereikt de kast-editor niet | ✔ Ctrl+Z bereikt de undo niet |
 | fouten van de widget | geen | geen | geen |
 
 Per app, om op te letten. De instellingen voor query en hash staan in `/admin/sites`, niet op
 de scripttag:
 
-- **defend-greenland**: zet de tag in `index.html` na de `<script type="module">` (regel ~2554).
-  In `/admin/sites`: alleen parameter `quality`, en de hash meesturen, anders ontbreken
-  kwaliteit en level in de tijdlijn. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
+- **defend-greenland**: zet de tag in `index.html` **vóór** de `<script type="module">`. Beide
+  worden uitgesteld uitgevoerd, in volgorde, dus dan bestaat `AudioFeedback.event()` al als het
+  spel start. Menu's, levels, pauze en game over zijn overlays en canvas zonder eigen URL. Ze
+  komen dus alleen in de tijdlijn als het spel ze meldt met `AudioFeedback.event()`, bijvoorbeeld
+  bij `loadScenario` en bij het openen van een menu. In `/admin/sites`: alleen parameter
+  `quality`, en de hash meesturen voor de tabs van de editor. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
   `webgl.spec.ts` faalt op elke `console.error`, maar onder Playwright laat de widget zich niet
   zien, dus dat blijft groen. `deploy:check` en de buildtests kijken alleen naar `dist/`, en daar
   komt de widget niet in.
@@ -133,6 +168,7 @@ Vanuit de app zelf:
 
 ```js
 AudioFeedback.setContext({ gebruiker: 'tester-3', ontwerp: id }); // gaat mee met de volgende opname
+AudioFeedback.event('level', 'Nuuk', { golf: 3 }); // zie hieronder
 AudioFeedback.open();      // kaartje openklappen
 AudioFeedback.minimize();
 AudioFeedback.clear();     // alle opnames die nog in deze browser staan weggooien, bij uitloggen
@@ -142,6 +178,46 @@ AudioFeedback.init({ project: 'x', position: 'top-left' }); // met data-manual
 
 Instellingen kunnen ook in `window.AudioFeedbackConfig = {...}` vóór het script.
 
+### Events uit de app
+
+Niet alles wat een gebruiker ziet, staat in de URL. Een spel of editor wisselt van scherm,
+level of modus zonder dat het adres verandert. De app meldt dat zelf:
+
+```js
+window.AudioFeedback?.event('level', 'Level 3: Nuuk', { moeilijkheid: 'zwaar' });
+window.AudioFeedback?.event('screen', 'Pauzemenu');
+window.AudioFeedback?.event('game-over');
+```
+
+- **`type`**: een eigen naam, zoals `screen`, `level` of `error`. Begint met een letter, met
+  daarna letters, cijfers of `. _ : -`, hooguit 50 tekens. `start`, `navigate`, `pause`, `resume`
+  en `stop` zijn van de widget. Een ongeldig type geeft een waarschuwing in de console en gaat
+  niet mee.
+- **`label`**: korte omschrijving voor de beheerpagina, hooguit 200 tekens.
+- **`data`**: hooguit 20 sleutel-waardeparen. Getallen en booleans worden tekst.
+
+Het event gaat niet meteen naar de server. Het blijft in de browser bij de opname, en gaat pas
+mee als de gebruiker op **Versturen** drukt. Een paginawissel loopt via hetzelfde pad: het is
+een event met type `navigate`, dat de widget zelf meldt.
+
+- **Tijdens een opname** krijgt het event de huidige positie in de opname. Valt het in een
+  pauze, dan ligt het op het punt waar de opname stilstaat. Het staat in IndexedDB, dus het
+  overleeft herladen of een crash, net als de audio.
+- **Buiten een opname** houdt de widget alleen in het geheugen de events van de laatste 30
+  seconden bij (hooguit 50). Drukt de gebruiker op **Opnemen**, dan gaan die mee met een
+  negatieve tijd. Mensen drukken vaak pas op **Opnemen** nadat er iets misging. Paginawissels
+  van vóór de start gaan ook zo mee.
+- **Wat de gebruiker ziet**: het kaartje vermeldt het vooraf zodra de app iets gemeld heeft, en
+  bij het terugluisteren staan de events in een lijst.
+- **Grenzen**: hooguit 500 events van de app per opname. De server controleert het schema nog
+  eens.
+- **Zonder widget**: met `?.` doet de aanroep niets als de widget er niet is, bijvoorbeeld
+  onder Playwright of op een host die niet in `data-hosts` staat. Een aanroep van vóórdat
+  het script van de widget gedraaid heeft, gaat verloren. Zet de tag dus vóór het script van de app.
+
+Het schema staat in [`/openapi.yaml`](public/openapi.yaml) (`TimelineEntry`), samen met de
+upload, voor wie een eigen client bouwt.
+
 ## Server
 
 Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type stripping).
@@ -150,7 +226,7 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 |---|---|
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
-| `GET /admin` | beheerpagina: luisteren, per pagina naar de tijd springen, filteren per project, downloaden, verwijderen |
+| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, downloaden, verwijderen |
 | `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
@@ -158,6 +234,7 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 | `GET /api/recordings/:id/audio` | audio, met Range-requests |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
+| `GET /openapi.yaml` | OpenAPI-spec van de upload en het eventschema |
 | `GET /health` | `{ ok, version }` |
 
 `/admin`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic

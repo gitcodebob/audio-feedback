@@ -226,13 +226,47 @@ describe('upload', () => {
 
   test('vreemde velden in de tijdlijn en context worden weggefilterd', async () => {
     const m = meta({
-      timeline: [{ at: 0, type: 'start', url: 'javascript:x' }, { at: 1, type: 'hack' }, 'onzin'],
+      timeline: [{ at: 0, type: 'start', url: 'javascript:x' }, { at: 1, type: '<script>' }, { at: 2 }, 'onzin'],
       context: { ok: 'ja', obj: { nested: true } },
     });
     assert.equal((await post(m)).status, 201);
     const stored = await storage.get(m.id);
     assert.deepEqual(stored!.timeline, [{ at: 0, type: 'start' }]);
     assert.deepEqual(stored!.context, { ok: 'ja' });
+  });
+
+  test('events van de app gaan mee, ook die van vlak vóór de start', async () => {
+    const m = meta({
+      timeline: [
+        { at: -12_000, type: 'level', label: 'Nuuk', data: { moeilijkheid: 'zwaar', golf: 3, nested: { x: 1 } } },
+        { at: -90_000, type: 'screen', label: 'te lang geleden: wordt -30 s' },
+        { at: 0, type: 'start', url: `${ORIGIN}/` },
+        { at: 2_000, type: 'game-over', label: 'x'.repeat(500), url: `${ORIGIN}/?token=geheim` },
+      ],
+    });
+    assert.equal((await post(m)).status, 201);
+    const [level, screen, , over] = (await storage.get(m.id))!.timeline;
+    assert.deepEqual(level, { at: -12_000, type: 'level', label: 'Nuuk', data: { moeilijkheid: 'zwaar', golf: '3' } });
+    assert.equal(screen!.at, -30_000);
+    assert.equal(over!.label!.length, 200);
+    // Ook bij een event van de app blijft er van de URL niet meer over dan de site toestaat.
+    assert.equal(over!.url, `${ORIGIN}/`);
+  });
+
+  test('hooguit 500 events van de app per opname; die van de widget blijven', async () => {
+    const app = Array.from({ length: 600 }, (_, i) => ({ at: i, type: 'tick' }));
+    const m = meta({ timeline: [...app, { at: 700, type: 'stop' }] });
+    assert.equal((await post(m)).status, 201);
+    const timeline = (await storage.get(m.id))!.timeline;
+    assert.equal(timeline.filter((e) => e.type === 'tick').length, 500);
+    assert.equal(timeline.at(-1)!.type, 'stop');
+  });
+
+  test('de OpenAPI-spec is op te halen', async () => {
+    const res = await fetch(`${base}/openapi.yaml`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type')!, /yaml/);
+    assert.match(await res.text(), /TimelineEntry:/);
   });
 });
 
@@ -468,11 +502,18 @@ describe('beheer', () => {
   });
 
   test('de beheerpagina escapet wat clients insturen', async () => {
-    const m = meta({ title: '<script>alert(1)</script>', context: { x: '"><img src=x onerror=alert(1)>' } });
+    const m = meta({
+      title: '<script>alert(1)</script>',
+      context: { x: '"><img src=x onerror=alert(1)>' },
+      timeline: [{ at: -3_000, type: 'level', label: '<b>vet</b>', data: { k: '<i>schuin</i>' } }],
+    });
     await post(m);
     const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
     assert.ok(!html.includes('<script>alert(1)</script>'));
     assert.ok(!html.includes('<img src=x'));
+    assert.ok(!html.includes('<b>vet</b>') && !html.includes('<i>schuin</i>'));
+    // Van vóór de start: als negatieve tijd, en afspelen begint dan bij 0.
+    assert.ok(html.includes('data-seek="0" title="Vóór de opname; afspelen vanaf het begin">−0:03</button>'));
     assert.ok(html.includes(m.id));
     // Het kenmerk dat de widget na het versturen toont.
     assert.ok(html.includes(`kenmerk <span class="code">${m.id.slice(0, 8)}</span>`));

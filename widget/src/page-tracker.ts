@@ -1,10 +1,8 @@
-// Houdt bij welke pagina er tijdens de opname open stond. Single-page apps
-// wisselen van URL zonder te herladen, dus naast popstate/hashchange kijken we
-// elke seconde of location.href veranderd is. history.pushState patchen zou
-// preciezer zijn, maar dat is ingrijpen in de app die ons insluit.
-
-import { cleanUrl, type UrlOptions } from './clean-url.ts';
-import type { TimelineEntry } from './types.ts';
+// Merkt paginawissels op. Single-page apps wisselen van URL zonder te herladen, dus
+// naast popstate/hashchange kijken we elke seconde of location.href veranderd is.
+// history.pushState patchen zou preciezer zijn, maar dat is ingrijpen in de app die
+// ons insluit. Dit loopt ook buiten een opname: een wissel van vlak vóór Opnemen gaat
+// via de buffer mee. Wat er van het adres bewaard blijft, beslist de widget.
 
 const POLL_MS = 1_000;
 
@@ -12,22 +10,14 @@ export class PageTracker {
   private last = '';
   private timer = 0;
   private readonly check = () => this.sample();
-  private readonly opts: UrlOptions;
-  private readonly now: () => number;
-  private readonly onEntry: (entry: TimelineEntry) => void;
+  private readonly onChange: (href: string, title: string) => void;
 
-  constructor(opts: UrlOptions, now: () => number, onEntry: (entry: TimelineEntry) => void) {
-    this.opts = opts;
-    this.now = now;
-    this.onEntry = onEntry;
-  }
-
-  currentUrl(): string {
-    return cleanUrl(location.href, this.opts);
+  constructor(onChange: (href: string, title: string) => void) {
+    this.onChange = onChange;
   }
 
   start(): void {
-    this.last = this.currentUrl();
+    this.last = location.href;
     window.addEventListener('popstate', this.check);
     window.addEventListener('hashchange', this.check);
     this.timer = window.setInterval(this.check, POLL_MS);
@@ -40,9 +30,9 @@ export class PageTracker {
   }
 
   private sample(): void {
-    const url = this.currentUrl();
-    if (url === this.last) return;
-    this.last = url;
-    this.onEntry({ at: this.now(), type: 'navigate', url, title: document.title });
+    const href = location.href;
+    if (href === this.last) return;
+    this.last = href;
+    this.onChange(href, document.title);
   }
 }

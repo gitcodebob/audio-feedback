@@ -11,6 +11,7 @@
 //   PUT  /api/sites/:id              site wijzigen      │
 //   DELETE /api/sites/:id            site verwijderen   ┘
 //   GET  /api/sites/config           URL-instellingen van de site die het vraagt (voor de widget)
+//   GET  /openapi.yaml               de spec van upload en eventschema, voor wie een eigen client bouwt
 //   GET  /                           demopagina (alleen met DEMO aan)
 //   GET  /health
 
@@ -368,6 +369,11 @@ export function createApp(config: AppConfig) {
           // Lettertypen laadt de browser altijd met CORS, ook vanaf een andere site.
           res.setHeader('Access-Control-Allow-Origin', '*');
           return await serveFile(res, join(config.distDir, 'fonts', 'montserrat-latin-wght-normal.woff2'), 'font/woff2', 'public, max-age=31536000, immutable');
+        }
+        if (path === '/openapi.yaml') {
+          // Ook op te halen door een spec-viewer op een andere site.
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          return await serveFile(res, join(config.publicDir, 'openapi.yaml'), 'application/yaml; charset=utf-8', 'public, max-age=300');
         }
         if (path === '/health') return json(res, 200, { ok: true, version: config.version });
         if (path === '/api/sites/config') {

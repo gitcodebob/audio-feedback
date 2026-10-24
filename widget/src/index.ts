@@ -6,6 +6,7 @@
 // als die vóór het script staat. Met data-manual start er niets vanzelf en roept de
 // app zelf AudioFeedback.init({...}) aan.
 
+import { appEvent, EventBuffer } from './events.ts';
 import { SessionStore } from './store.ts';
 import { FeedbackWidget, VERSION, type Corner, type WidgetConfig } from './widget.ts';
 
@@ -22,6 +23,12 @@ interface AudioFeedbackApi {
   open(): void;
   minimize(): void;
   setContext(values: Record<string, string>): void;
+  /**
+   * Meldt iets uit de app, zoals een scherm of level. Tijdens een opname komt het op die plek
+   * in de tijdlijn; daarbuiten bewaart de widget de laatste halve minuut, die meegaat als de
+   * gebruiker op Opnemen drukt. Er gaat pas iets naar de server als de gebruiker verstuurt.
+   */
+  event(type: string, label?: string, data?: Record<string, string | number | boolean>): void;
   /** Gooit alle opnames weg die nog in deze browser staan, ook een lopende. Roep dit aan bij uitloggen. */
   clear(): Promise<void>;
   destroy(): void;
@@ -106,6 +113,8 @@ function resolveConfig(options: InitOptions): WidgetConfig {
 let instance: FeedbackWidget | null = null;
 // setContext vóór init (of vóór DOMContentLoaded) mag niet verloren gaan.
 const pendingContext: Record<string, string> = {};
+// Events van vóór init gaan ook in de buffer; die blijft bij een nieuwe init dezelfde.
+const events = new EventBuffer();
 
 function init(options: InitOptions = {}): FeedbackWidget | null {
   const merged: InitOptions = { ...window.AudioFeedbackConfig, ...fromScriptTag(), ...options };
@@ -114,7 +123,7 @@ function init(options: InitOptions = {}): FeedbackWidget | null {
   if (merged.hosts?.length && !merged.hosts.includes(location.hostname.toLowerCase())) return null;
   instance?.destroy();
   merged.context = { ...merged.context, ...pendingContext };
-  const start = () => (instance = new FeedbackWidget(resolveConfig(merged)));
+  const start = () => (instance = new FeedbackWidget(resolveConfig(merged), events));
   if (document.body) return start();
   document.addEventListener('DOMContentLoaded', start, { once: true });
   return null;
@@ -129,6 +138,13 @@ if (!window.AudioFeedback) {
     setContext: (values) => {
       Object.assign(pendingContext, values);
       instance?.setContext(values);
+    },
+    event: (type, label, data) => {
+      const entry = appEvent(type, label, data);
+      if (typeof entry === 'string') return console.warn(`[audio-feedback] event genegeerd: ${entry}`);
+      if (instance) return instance.event(entry);
+      events.fromApp = true;
+      events.push(entry);
     },
     // Ook zonder kaartje (andere host, nog niet gestart): de opslag is van de origin, niet van de widget.
     clear: () => (instance ? instance.clear() : new SessionStore().clear().catch(() => {})),
