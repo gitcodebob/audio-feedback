@@ -65,7 +65,7 @@ vóór **Opnemen** gaan ook mee. Meer opties staan bij [Integreren](#integreren)
 
 | Veld | Inhoud |
 |---|---|
-| audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut |
+| audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut. In `/admin` ook als mp3 te downloaden, voor tools die WebM weigeren |
 | `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Per site in te stellen in [`/admin/sites`](#sites-beheren) |
 | `timeline` | events met hun positie in de opname. Dat zijn de paginawissels (`pushState`, gewone navigatie, en de hash als die meegaat), pauze en hervat, en wat de app met [`AudioFeedback.event()`](#events-uit-de-app) meldt. Ook de events van de halve minuut vóór **Opnemen** gaan mee, met een negatieve tijd. In de beheerpagina klik je op een tijd en hoor je wat er op dat moment gezegd werd |
 | `context` | vrije sleutel-waardeparen van de app zelf, bijvoorbeeld versie of omgeving |
@@ -224,18 +224,19 @@ upload, voor wie een eigen client bouwt.
 
 ## Server
 
-Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type stripping).
+Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type stripping). Alleen de mp3-download heeft een systeemprogramma nodig: ffmpeg, dat in de Docker-image zit.
 
 | Route | |
 |---|---|
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
-| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, audio en events downloaden, verwijderen |
+| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, audio (zoals opgenomen of als mp3) en events downloaden, verwijderen |
 | `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
 | `GET /api/recordings[?project=]` | lijst als JSON |
-| `GET /api/recordings/:id/audio` | audio, met Range-requests |
+| `GET /api/recordings/:id/audio` | audio zoals opgenomen (WebM, Ogg of M4A), met Range-requests |
+| `GET /api/recordings/:id/audio.mp3` | dezelfde audio als mp3-download (`<project>-<kenmerk>.mp3`), mono op 64 kbit/s, door ffmpeg omgezet terwijl het binnenkomt. Veel verwerkingstools lezen geen WebM met alleen audio, mp3 wel. Er is geen lengte vooraf en geen Range: dit is om te downloaden, niet om af te spelen. Zonder ffmpeg: 501. Te veel tegelijk: 503 met `Retry-After` |
 | `GET /api/recordings/:id/events` | de events van een opname als JSON-bestand (`<project>-<kenmerk>-events.json`), om te delen of verder te verwerken. Met project, start, duur, beginpagina, context en browser; elk event met `time` zoals de speler hem toont (`1:05`, `−0:03`). Bestandsnaam, grootte en origin van de opslag gaan niet mee |
 | `DELETE /api/recordings/:id` | verwijderen |
 | `GET /` | demopagina met de widget, alleen met `DEMO` aan |
@@ -272,6 +273,8 @@ alleen het pad mee.
 | `MAX_UPLOAD_MB` | `9.5` | onder de 10 MB van de host-Caddy |
 | `MAX_STORAGE_MB` | `2048` | alle opnames samen. Past een nieuwe opname er niet meer bij, dan gaan de oudste weg: nieuwe feedback gaat voor. Let op: een vloed aan nep-uploads verdringt zo ook echte feedback. Hoe snel dat kan, bepalen de rate limits. `0` is geen grens |
 | `MAX_CONCURRENT_UPLOADS` | `4` | daarboven 503 met `Retry-After`; een upload staat even in het geheugen |
+| `MAX_CONCURRENT_MP3` | `2` | mp3-omzettingen tegelijk (elk een ffmpeg-proces); daarboven 503 met `Retry-After`. De container heeft maar een halve CPU en 256 MB |
+| `FFMPEG_PATH` | `ffmpeg` | het programma voor de mp3-download; een kale naam wordt in `PATH` gezocht |
 | `RATE_LIMIT_PER_HOUR` | `60` | uploads per IP, en per /64 bij IPv6 |
 | `RATE_LIMIT_GLOBAL_PER_HOUR` | `600` | uploads van alle IP's samen |
 | `TRUST_PROXY` | `true` | IP uit `X-Forwarded-For`, het laatste adres (dat van Caddy) |
@@ -292,6 +295,9 @@ andere origin dan de server, zodat de upload echt cross-origin is. Op deze machi
 systeembibliotheken. `BROWSER_SYSROOT` wijst naar een map met uitgepakte libs. Standaard is dat
 de `.browser-deps` van wings of fury (`npm run setup:browser` daar).
 
+De test van de mp3-download met echte audio draait alleen als `ffmpeg` in `PATH` staat en slaat zichzelf anders over; de rest van die tests gebruikt een nep-ffmpeg. In de Docker-image zit ffmpeg altijd, dus daar draaien ze allemaal:
+`docker run --rm -v "$PWD":/work:ro -w /work <image> node --test tests/server.test.ts`.
+
 Niet automatisch getest: Safari en Firefox. De code kiest per browser een formaat dat
 `MediaRecorder` kan (WebM/Opus, Ogg/Opus, MP4/AAC), en de server accepteert alle drie. Een
 handmatige proef op een iPhone is nog nodig voordat dit breed uitgaat.
@@ -299,7 +305,9 @@ handmatige proef op een iPhone is nog nodig voordat dit breed uitgaat.
 ## Uitrollen
 
 `Dockerfile` bouwt de widget in de container, dus er hoeft vooraf niets op de host gebouwd te
-worden. `compose.yaml` zet de app op poort 3029, met `./data` als volume en geheimen uit `.env`.
+worden. Hij installeert ook ffmpeg (Debian-pakket, voor de mp3-download); dat maakt het image zo'n
+640 MB groter, maar die laag staat boven de code en blijft dus bij een herbouw in de cache. De build
+faalt als ffmpeg zonder mp3-encoder komt. `compose.yaml` zet de app op poort 3029, met `./data` als volume en geheimen uit `.env`.
 
 Eenmalig een wachtwoord voor `/admin`:
 

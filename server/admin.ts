@@ -80,6 +80,11 @@ export function eventsFileName(r: StoredRecording): string {
   return `${r.project}-${r.id.slice(0, 8)}-events.json`;
 }
 
+/** Zoals de events: wie het downloadt en doorstuurt, herkent het aan project en kenmerk. */
+export function mp3FileName(r: StoredRecording): string {
+  return `${r.project}-${r.id.slice(0, 8)}.mp3`;
+}
+
 function renderRecording(r: StoredRecording): string {
   const timeline = r.timeline.map(renderEntry).join('');
   const context = tags(r.context);
@@ -89,7 +94,8 @@ function renderRecording(r: StoredRecording): string {
       <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
       ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
       <span class="spacer"></span>
-      <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}" title="Audio downloaden">audio</a>
+      <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}" title="Audio downloaden zoals opgenomen">audio</a>
+      <a href="/api/recordings/${r.id}/audio.mp3" download="${escape(mp3FileName(r))}" title="Audio als mp3, voor tools die geen WebM lezen">mp3</a>
       <a href="/api/recordings/${r.id}/events" download="${escape(eventsFileName(r))}" title="Events en gegevens van de opname als JSON">events</a>
       <button class="delete" data-delete="${r.id}">verwijderen</button>
     </header>
