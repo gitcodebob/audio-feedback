@@ -11,8 +11,14 @@ COPY scripts/build.ts scripts/
 COPY widget widget
 RUN node scripts/build.ts
 
-# ---------- fase 2: de server (geen runtime-dependencies) ----------
+# ---------- fase 2: de server (geen npm-dependencies, wel ffmpeg) ----------
 FROM node:22-slim
+# ffmpeg zet opnames om naar mp3 voor de download. De laatste regel laat de build mislukken als
+# ffmpeg zonder mp3-encoder komt, in plaats van dat pas de eerste download dat ontdekt.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/* \
+ && ffmpeg -hide_banner -encoders | grep libmp3lame
 WORKDIR /app
 COPY package.json ./
 COPY server server

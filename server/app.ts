@@ -3,6 +3,7 @@
 //   POST /api/recordings             upload (multipart: meta + audio), CORS per origin
 //   GET  /api/recordings             lijst              ┐
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
+//   GET  /api/recordings/:id/audio.mp3 als mp3 (ffmpeg) │
 //   GET  /api/recordings/:id/events  events als JSON    │
 //   DELETE /api/recordings/:id       verwijderen        │
 //   GET  /admin                      luisterpagina      │
@@ -24,7 +25,8 @@ import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
-import { eventsDocument, eventsFileName, renderAdmin, renderSites } from './admin.ts';
+import { eventsDocument, eventsFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
+import { Mp3Error, sendMp3 } from './mp3.ts';
 import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
 import { AUDIO_TYPES, baseAudioType, parseMeta, sniffAudio, ValidationError } from './validate.ts';
@@ -39,6 +41,10 @@ export interface AppConfig {
   maxStorageBytes: number;
   /** Uploads die tegelijk binnen mogen komen; elke upload staat even in het geheugen. */
   maxConcurrentUploads: number;
+  /** Het ffmpeg-programma voor de mp3-download; een kale naam wordt in PATH gezocht. */
+  ffmpegPath: string;
+  /** mp3-omzettingen die tegelijk mogen lopen; elke is een ffmpeg-proces op een kleine CPU. */
+  maxConcurrentConversions: number;
   /** Uploads per IP (IPv6: per /64) per uur. */
   rateLimit: number;
   /** Uploads per uur van alle IP's samen. */
@@ -125,6 +131,7 @@ export function createApp(config: AppConfig) {
   const uploads = new Map<string, number[]>();
   let recentUploads: number[] = [];
   let activeUploads = 0;
+  let activeConversions = 0;
 
   function rateLimited(ip: string): boolean {
     const now = Date.now();
@@ -330,6 +337,35 @@ export function createApp(config: AppConfig) {
     createReadStream(path).pipe(res);
   }
 
+  async function serveMp3(req: IncomingMessage, res: ServerResponse, record: StoredRecording): Promise<void> {
+    const headers = {
+      'Content-Type': 'audio/mpeg',
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `attachment; filename="${mp3FileName(record)}"`,
+    };
+    // Een HEAD hoeft geen omzetting: de lengte kennen we toch niet van tevoren.
+    if (req.method === 'HEAD') {
+      res.writeHead(200, headers);
+      return void res.end();
+    }
+    if (activeConversions >= config.maxConcurrentConversions) {
+      res.setHeader('Retry-After', '10');
+      throw new HttpError(503, 'het is even druk, probeer het zo opnieuw');
+    }
+    activeConversions++;
+    try {
+      await sendMp3(config.ffmpegPath, storage.audioPath(record), res, headers);
+    } catch (err) {
+      if (!(err instanceof Mp3Error)) throw err;
+      console.error(`[mp3] ${record.id}: ${err.message}`);
+      throw err.unavailable
+        ? new HttpError(501, 'mp3-omzetting is niet beschikbaar op deze server (ffmpeg ontbreekt)')
+        : new HttpError(500, 'omzetten naar mp3 lukte niet');
+    } finally {
+      activeConversions--;
+    }
+  }
+
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
@@ -417,6 +453,13 @@ export function createApp(config: AppConfig) {
           const record = await storage.get(audio[1]!);
           if (!record) return json(res, 404, { error: 'niet gevonden' });
           return await serveAudio(req, res, record);
+        }
+        const mp3 = /^\/api\/recordings\/([0-9a-f-]{36})\/audio\.mp3$/.exec(path);
+        if (mp3) {
+          if (!requireAdmin(req, res)) return;
+          const record = await storage.get(mp3[1]!);
+          if (!record) return json(res, 404, { error: 'niet gevonden' });
+          return await serveMp3(req, res, record);
         }
         const events = /^\/api\/recordings\/([0-9a-f-]{36})\/events$/.exec(path);
         if (events) {

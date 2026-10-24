@@ -34,6 +34,8 @@ const app = createApp({
   maxUploadBytes: megabytes(env.MAX_UPLOAD_MB, 9.5),
   maxStorageBytes: megabytes(env.MAX_STORAGE_MB, 2048),
   maxConcurrentUploads: Number(env.MAX_CONCURRENT_UPLOADS ?? 4),
+  ffmpegPath: env.FFMPEG_PATH ?? 'ffmpeg',
+  maxConcurrentConversions: Number(env.MAX_CONCURRENT_MP3 ?? 2),
   rateLimit: Number(env.RATE_LIMIT_PER_HOUR ?? 60),
   rateLimitGlobal: Number(env.RATE_LIMIT_GLOBAL_PER_HOUR ?? 600),
   retentionDays: retentionDays > 0 ? retentionDays : 0,

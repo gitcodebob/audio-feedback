@@ -28,3 +28,9 @@ test('de Dockerfile neemt elk bestand uit widget/src mee dat de server importeer
   const missing = [...widgetImports()].filter((f) => !copied.includes(f));
   assert.deepEqual(missing, [], `ontbreekt in de COPY-regel van de Dockerfile: ${missing.join(', ')}`);
 });
+
+test('de Dockerfile installeert ffmpeg in de fase die draait, voor de mp3-download', () => {
+  const dockerfile = readFileSync(join(root, 'Dockerfile'), 'utf8');
+  const runtimeStage = dockerfile.split(/^FROM /m).at(-1)!;
+  assert.match(runtimeStage, /apt-get install[^\n]*ffmpeg/);
+});

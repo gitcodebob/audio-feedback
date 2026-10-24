@@ -1,7 +1,8 @@
 import { after, before, describe, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request, type Server } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp, rateKey, type AppConfig } from '../server/app.ts';
@@ -63,6 +64,8 @@ function config(storage: Storage, sites: SiteStore, overrides: Partial<AppConfig
     maxUploadBytes: 64 * 1024,
     maxStorageBytes: 0,
     maxConcurrentUploads: 4,
+    ffmpegPath: 'ffmpeg',
+    maxConcurrentConversions: 2,
     rateLimit: 1000,
     rateLimitGlobal: 1000,
     retentionDays: 90,
@@ -551,6 +554,161 @@ describe('beheer', () => {
     assert.ok(html.includes(m.id));
     // Het kenmerk dat de widget na het versturen toont.
     assert.ok(html.includes(`kenmerk <span class="code">${m.id.slice(0, 8)}</span>`));
+  });
+});
+
+describe('mp3-download', () => {
+  let toolDir: string;
+  before(async () => {
+    toolDir = await mkdtemp(join(tmpdir(), 'audio-feedback-ffmpeg-'));
+  });
+  after(() => rm(toolDir, { recursive: true, force: true }));
+
+  /** Een ffmpeg-vervanger: schrijft zijn argumenten naast zich neer en doet verder wat het script zegt. */
+  async function fakeFfmpeg(name: string, body: string): Promise<string> {
+    const path = join(toolDir, name);
+    await writeFile(path, `#!/bin/sh\nprintf '%s\\n' "$@" > "$0.args"\n${body}\n`);
+    await chmod(path, 0o755);
+    return path;
+  }
+
+  const mp3Url = (base: string, id: string) => `${base}/api/recordings/${id}/audio.mp3`;
+
+  test('vraagt om het wachtwoord en kent alleen bestaande opnames', async () => {
+    const m = meta();
+    await post(m);
+    assert.equal((await fetch(mp3Url(base, m.id))).status, 401);
+    assert.equal((await fetch(mp3Url(base, crypto.randomUUID()), { headers: AUTH })).status, 404);
+  });
+
+  test('geeft wat ffmpeg van de bewaarde audio maakt, als download', async () => {
+    const ffmpegPath = await fakeFfmpeg('ok', `printf 'ID3-nep-mp3'`);
+    await withApp({ ffmpegPath }, async (base, own) => {
+      const m = meta({ project: 'meterkast' });
+      await post(m, { to: base });
+      const res = await fetch(mp3Url(base, m.id), { headers: AUTH });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'audio/mpeg');
+      assert.equal(res.headers.get('content-disposition'), `attachment; filename="meterkast-${m.id.slice(0, 8)}.mp3"`);
+      assert.equal(await res.text(), 'ID3-nep-mp3');
+
+      const args = (await readFile(`${ffmpegPath}.args`, 'utf8')).split('\n');
+      assert.equal(args[args.indexOf('-i') + 1], own.audioPath((await own.get(m.id))!));
+      assert.ok(args.includes('libmp3lame'));
+      assert.deepEqual(args.slice(args.indexOf('-f')), ['-f', 'mp3', 'pipe:1', '']);
+
+      const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+      assert.ok(html.includes(`href="/api/recordings/${m.id}/audio.mp3" download="meterkast-${m.id.slice(0, 8)}.mp3"`));
+    });
+  });
+
+  test('een HEAD start ffmpeg niet', async () => {
+    await withApp({ ffmpegPath: join(toolDir, 'bestaat-niet') }, async (base) => {
+      const m = meta();
+      await post(m, { to: base });
+      const res = await fetch(mp3Url(base, m.id), { method: 'HEAD', headers: AUTH });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'audio/mpeg');
+    });
+  });
+
+  test('een mislukte omzetting wordt een nette fout, zonder de uitvoer van ffmpeg', async () => {
+    const ffmpegPath = await fakeFfmpeg('kapot', `echo 'geheim pad /data/recordings' >&2; exit 1`);
+    const logged = mock.method(console, 'error', () => {});
+    try {
+      await withApp({ ffmpegPath }, async (base) => {
+        const m = meta();
+        await post(m, { to: base });
+        const res = await fetch(mp3Url(base, m.id), { headers: AUTH });
+        assert.equal(res.status, 500);
+        assert.deepEqual(await res.json(), { error: 'omzetten naar mp3 lukte niet' });
+      });
+      // Wel in de serverlog, voor wie uitzoekt waarom.
+      assert.ok(logged.mock.calls.some((c) => String(c.arguments[0]).includes('geheim pad')));
+    } finally {
+      logged.mock.restore();
+    }
+  });
+
+  test('zonder ffmpeg: 501 met uitleg', async () => {
+    const logged = mock.method(console, 'error', () => {});
+    try {
+      await withApp({ ffmpegPath: join(toolDir, 'bestaat-niet') }, async (base) => {
+        const m = meta();
+        await post(m, { to: base });
+        const res = await fetch(mp3Url(base, m.id), { headers: AUTH });
+        assert.equal(res.status, 501);
+        assert.match(((await res.json()) as { error: string }).error, /ffmpeg/);
+      });
+    } finally {
+      logged.mock.restore();
+    }
+  });
+
+  test('een omzetting die halverwege stukgaat, lijkt niet compleet', async () => {
+    const ffmpegPath = await fakeFfmpeg('halverwege', `printf 'half'; sleep 0.2; exit 1`);
+    await withApp({ ffmpegPath }, async (base) => {
+      const m = meta();
+      await post(m, { to: base });
+      await assert.rejects(async () => (await fetch(mp3Url(base, m.id), { headers: AUTH })).arrayBuffer());
+    });
+  });
+
+  test('te veel omzettingen tegelijk: 503 met Retry-After, en ffmpeg stopt als de client weggaat', async () => {
+    // Geeft meteen een stukje en blijft dan hangen, zodat de eerste omzetting bezet blijft.
+    const ffmpegPath = await fakeFfmpeg('traag', `printf 'x'; exec sleep 5`);
+    await withApp({ ffmpegPath, maxConcurrentConversions: 1 }, async (base) => {
+      const m = meta();
+      await post(m, { to: base });
+      const first = new AbortController();
+      const running = await fetch(mp3Url(base, m.id), { headers: AUTH, signal: first.signal });
+      assert.equal(running.status, 200);
+
+      const busy = await fetch(mp3Url(base, m.id), { headers: AUTH });
+      assert.equal(busy.status, 503);
+      assert.equal(busy.headers.get('retry-after'), '10');
+
+      first.abort();
+      // De plek komt vrij zodra ffmpeg gestopt is; de sleep van 5 seconden loopt niet uit.
+      const started = Date.now();
+      let status = 503;
+      while (status === 503 && Date.now() - started < 2000) {
+        await new Promise((r) => setTimeout(r, 50));
+        const retry = await fetch(mp3Url(base, m.id), { headers: AUTH, signal: AbortSignal.timeout(500) }).catch(() => null);
+        status = retry?.status ?? 503;
+        retry?.body?.cancel().catch(() => {});
+      }
+      assert.equal(status, 200);
+    });
+  });
+
+  // De echte ffmpeg: alleen waar die is (in de Docker-image altijd).
+  const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
+  test('met echte ffmpeg: een WebM met Opus wordt een mp3 van de juiste duur', { skip: !hasFfmpeg && 'ffmpeg ontbreekt' }, async () => {
+    const webm = spawnSync(
+      'ffmpeg',
+      ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-c:a', 'libopus', '-b:a', '32k', '-f', 'webm', 'pipe:1'],
+      { maxBuffer: 1 << 20 },
+    );
+    assert.equal(webm.status, 0, String(webm.stderr));
+    const m = meta();
+    const posted = await post(m, { audio: new Uint8Array(webm.stdout) });
+    assert.equal(posted.status, 201);
+
+    const res = await fetch(mp3Url(base, m.id), { headers: AUTH });
+    assert.equal(res.status, 200);
+    const mp3 = new Uint8Array(await res.arrayBuffer());
+    // Drie seconden op 64 kbit/s is 24 kB; een paar frames meer of minder is geen punt.
+    assert.ok(mp3.length > 20_000 && mp3.length < 28_000, `${mp3.length} bytes`);
+    // Het begint met een MPEG-frame (11 bits sync), niet met een Xing-header met nul frames.
+    assert.ok(mp3[0] === 0xff && (mp3[1]! & 0xe0) === 0xe0, 'geen MPEG-frame aan het begin');
+    assert.ok(!Buffer.from(mp3.subarray(0, 200)).includes('Xing') && !Buffer.from(mp3.subarray(0, 200)).includes('Info'));
+
+    // En ffmpeg zelf leest het weer, met de duur van de opname (zonder Xing-header uit de bitrate).
+    const file = join(toolDir, 'echt.mp3');
+    await writeFile(file, mp3);
+    const probe = spawnSync('ffmpeg', ['-v', 'info', '-i', file, '-f', 'null', '-']);
+    assert.match(String(probe.stderr), /Duration: 00:00:0[23]\./);
   });
 });
 
