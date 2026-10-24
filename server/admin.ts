@@ -1,6 +1,7 @@
 // Beheerpagina: per opname de audio, de pagina's die erbij open stonden en wat de
 // app meldde (klik op een tijd om daarheen te springen) en de context. Alle velden komen van
-// clients en gaan dus door escape(); als link alleen http(s).
+// clients en gaan dus door escape(); als link alleen http(s). Plus de events van een opname
+// als JSON-download, om te delen of verder te verwerken.
 
 import type { Site } from './sites.ts';
 import type { StoredRecording } from './storage.ts';
@@ -54,6 +55,31 @@ function renderEntry(e: TimelineEntry): string {
       </tr>`;
 }
 
+/**
+ * De events van een opname, met wat nodig is om ze te lezen zonder de beheerpagina: welk
+ * project, wanneer, waar het begon. time is at zoals de speler hem toont. Bestandsnamen,
+ * grootte en origin blijven weg; die zijn van de opslag, niet van de feedback.
+ */
+export function eventsDocument(r: StoredRecording) {
+  return {
+    id: r.id,
+    kenmerk: r.id.slice(0, 8),
+    project: r.project,
+    startedAt: r.startedAt,
+    durationMs: r.durationMs,
+    url: r.url,
+    title: r.title,
+    context: r.context,
+    client: r.client,
+    recovered: r.recovered,
+    events: r.timeline.map((e) => ({ time: time(e.at), ...e })),
+  };
+}
+
+export function eventsFileName(r: StoredRecording): string {
+  return `${r.project}-${r.id.slice(0, 8)}-events.json`;
+}
+
 function renderRecording(r: StoredRecording): string {
   const timeline = r.timeline.map(renderEntry).join('');
   const context = tags(r.context);
@@ -63,7 +89,8 @@ function renderRecording(r: StoredRecording): string {
       <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · ${Math.round(r.sizeBytes / 1024)} kB · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
       ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
       <span class="spacer"></span>
-      <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}">download</a>
+      <a href="/api/recordings/${r.id}/audio" download="${escape(r.audioFile)}" title="Audio downloaden">audio</a>
+      <a href="/api/recordings/${r.id}/events" download="${escape(eventsFileName(r))}" title="Events en gegevens van de opname als JSON">events</a>
       <button class="delete" data-delete="${r.id}">verwijderen</button>
     </header>
     <audio controls preload="metadata" src="/api/recordings/${r.id}/audio" data-duration="${r.durationMs}"></audio>

@@ -3,6 +3,7 @@
 //   POST /api/recordings             upload (multipart: meta + audio), CORS per origin
 //   GET  /api/recordings             lijst              ┐
 //   GET  /api/recordings/:id/audio   audio, met Range   ├ beheer, Basic auth
+//   GET  /api/recordings/:id/events  events als JSON    │
 //   DELETE /api/recordings/:id       verwijderen        │
 //   GET  /admin                      luisterpagina      │
 //   GET  /admin/sites                sitebeheer         │
@@ -23,7 +24,7 @@ import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
-import { renderAdmin, renderSites } from './admin.ts';
+import { eventsDocument, eventsFileName, renderAdmin, renderSites } from './admin.ts';
 import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
 import { AUDIO_TYPES, baseAudioType, parseMeta, sniffAudio, ValidationError } from './validate.ts';
@@ -416,6 +417,21 @@ export function createApp(config: AppConfig) {
           const record = await storage.get(audio[1]!);
           if (!record) return json(res, 404, { error: 'niet gevonden' });
           return await serveAudio(req, res, record);
+        }
+        const events = /^\/api\/recordings\/([0-9a-f-]{36})\/events$/.exec(path);
+        if (events) {
+          if (!requireAdmin(req, res)) return;
+          const record = await storage.get(events[1]!);
+          if (!record) return json(res, 404, { error: 'niet gevonden' });
+          // Ingesprongen: dit bestand is om te delen en te lezen, niet alleen voor een programma.
+          const data = JSON.stringify(eventsDocument(record), null, 2);
+          res.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Length': Buffer.byteLength(data),
+            'Cache-Control': 'private, no-store',
+            'Content-Disposition': `attachment; filename="${eventsFileName(record)}"`,
+          });
+          return void res.end(data);
         }
       }
 
