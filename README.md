@@ -5,7 +5,7 @@ hoek neemt audio op (met pauzeren en hervatten) en stuurt die naar onze server, 
 adres van de pagina waar ze naar keken. De pagina zelf wordt niet opgeslagen.
 
 ```html
-<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
+<script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" async></script>
 ```
 
 Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankelijkheden, is
@@ -16,14 +16,12 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
 1. **Laat je site toe.** Voeg in [`/admin/sites`](#sites-beheren) de origin en de projectnaam van
    je app toe. Kies welke queryparameters en of de hash mee mogen. Standaard gaat alleen het pad
    mee. Zonder deze stap weigert de server je opnames.
-2. **Zet de scripttag in `index.html`**, vóór het script van je app:
+2. **Zet deze ene regel in de `<head>`** van `index.html`. Pas alleen de `data-`-waarden aan:
    ```html
-   <script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js"
-     data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
+   <script src="https://audio-feedback.hetzner.bobreijnders.nl/widget.js" data-project="mijn-app" data-hosts="mijn-app.example.nl" async></script>
    ```
-   Paginawissels (`pushState`, hash, gewone links) volgt de widget zelf.
-   Mag je app niet op de widgethost wachten, laad dan met `async` en buffer vroege events zelf
-   (zie [Events uit de app](#events-uit-de-app)).
+   Door `async` wacht je app nooit op de widgethost. Paginawissels (`pushState`, hash, gewone
+   links) volgt de widget zelf.
 3. **Meld wat niet in de URL staat**, zoals schermen, dialogen, levels, modi en fouten:
    ```js
    window.AudioFeedback?.event('screen', 'Instellingen');
@@ -35,7 +33,8 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
    - `type` is een vaste, korte naam om op te filteren. `label` is wat een mens in `/admin`
      leest. In `data` horen een paar losse velden.
    - Geen persoonsgegevens, tokens of ingevoerde tekst. Alles wat je meldt, gaat met de opname mee.
-   - Schrijf `?.`: zonder widget (tests, localhost) doet de aanroep dan niets.
+   - Schrijf `?.`: zolang de widget er niet is (nog aan het laden, tests, localhost), doet de
+     aanroep niets. Een event van vóór het laden gaat verloren; dat is bewust.
 4. **Heeft je app een login, roep dan bij uitloggen `AudioFeedback.clear()` aan**, zodat de
    volgende gebruiker geen opname van een ander aangeboden krijgt.
 5. **Controleer het resultaat.** Klik rond, neem iets op, verstuur het, en kijk in
@@ -127,9 +126,7 @@ er bij de server aankomt.
 Per app, om op te letten. De instellingen voor query en hash staan in `/admin/sites`, niet op
 de scripttag:
 
-- **defend-greenland**: zet de tag in `index.html` **vóór** de `<script type="module">`. Beide
-  worden uitgesteld uitgevoerd, in volgorde, dus dan bestaat `AudioFeedback.event()` al als het
-  spel start. Menu's, levels, pauze en game over zijn overlays en canvas zonder eigen URL. Ze
+- **defend-greenland**: menu's, levels, pauze en game over zijn overlays en canvas zonder eigen URL. Ze
   komen dus alleen in de tijdlijn als het spel ze meldt met `AudioFeedback.event()`, bijvoorbeeld
   bij `loadScenario` en bij het openen van een menu. In `/admin/sites`: alleen parameter
   `quality`, en de hash meesturen voor de tabs van de editor. De z-index van het kaartje (2147483000) ligt boven het startscherm (40). De e2e-test
@@ -154,7 +151,7 @@ de scripttag:
   data-position="bottom-right"
   data-privacy-url="https://meterkast.example.nl/privacy"
   data-context='{"versie": "1.4.0"}'
-  defer></script>
+  async></script>
 ```
 
 | Attribuut | Standaard | Betekenis |
@@ -217,17 +214,10 @@ een event met type `navigate`, dat de widget zelf meldt.
   bij het terugluisteren staan de events in een lijst.
 - **Grenzen**: hooguit 500 events van de app per opname. De server controleert het schema nog
   eens.
-- **Zonder widget**: met `?.` doet de aanroep niets als de widget er niet is, bijvoorbeeld
-  onder Playwright of op een host die niet in `data-hosts` staat. Een aanroep van vóórdat
-  het script van de widget gedraaid heeft, gaat verloren.
-- **Vóór het laden**: er zijn twee routes.
-  - `defer`, met de tag vóór het script van de app. De widget staat er dan altijd eerst. Hangt
-    de widgethost, dan wacht je app wel.
-  - `async`, en de app buffert zelf. Geef de tag een `id` en bewaar events zolang
-    `window.AudioFeedback` ontbreekt. Geef ze door bij `load` van de tag, en gooi ze weg bij
-    `error`. Een grotere buffer dan die van de widget (50 events, 30 seconden) heeft geen zin.
-    `event()` kent geen tijdparameter: een gebufferd event krijgt het moment van doorgeven.
-    Voorbeeld: `src/audioFeedback.ts` in Defend Greenland.
+- **Zonder widget**: met `?.` doet de aanroep niets als de widget er niet is. Dat geldt onder
+  Playwright, op een host die niet in `data-hosts` staat, en zolang het script nog laadt.
+- **Vóór het laden gaat een event verloren, en dat is bewust.** Bouw in je app geen buffer of
+  wachtrij: de app hoort niets te weten van hoe de widget laadt.
 - **Geen voorloper**: zet zelf geen `window.AudioFeedback` neer. De widget installeert zich alleen
   als die nog niet bestaat, dus een stub sluit hem buiten.
 
