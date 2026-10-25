@@ -22,6 +22,8 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
      data-project="mijn-app" data-hosts="mijn-app.example.nl" defer></script>
    ```
    Paginawissels (`pushState`, hash, gewone links) volgt de widget zelf.
+   Mag je app niet op de widgethost wachten, laad dan met `async` en buffer vroege events zelf
+   (zie [Events uit de app](#events-uit-de-app)).
 3. **Meld wat niet in de URL staat**, zoals schermen, dialogen, levels, modi en fouten:
    ```js
    window.AudioFeedback?.event('screen', 'Instellingen');
@@ -217,7 +219,17 @@ een event met type `navigate`, dat de widget zelf meldt.
   eens.
 - **Zonder widget**: met `?.` doet de aanroep niets als de widget er niet is, bijvoorbeeld
   onder Playwright of op een host die niet in `data-hosts` staat. Een aanroep van vóórdat
-  het script van de widget gedraaid heeft, gaat verloren. Zet de tag dus vóór het script van de app.
+  het script van de widget gedraaid heeft, gaat verloren.
+- **Vóór het laden**: er zijn twee routes.
+  - `defer`, met de tag vóór het script van de app. De widget staat er dan altijd eerst. Hangt
+    de widgethost, dan wacht je app wel.
+  - `async`, en de app buffert zelf. Geef de tag een `id` en bewaar events zolang
+    `window.AudioFeedback` ontbreekt. Geef ze door bij `load` van de tag, en gooi ze weg bij
+    `error`. Een grotere buffer dan die van de widget (50 events, 30 seconden) heeft geen zin.
+    `event()` kent geen tijdparameter: een gebufferd event krijgt het moment van doorgeven.
+    Voorbeeld: `src/audioFeedback.ts` in Defend Greenland.
+- **Geen voorloper**: zet zelf geen `window.AudioFeedback` neer. De widget installeert zich alleen
+  als die nog niet bestaat, dus een stub sluit hem buiten.
 
 Het schema staat in [`/openapi.yaml`](public/openapi.yaml) (`TimelineEntry`), samen met de
 upload, voor wie een eigen client bouwt.
