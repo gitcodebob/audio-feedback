@@ -1,6 +1,6 @@
 // Ingang van widget.js. Eén scripttag is genoeg:
 //
-//   <script src="https://feedback.example/widget.js" data-project="mijn-app" defer></script>
+//   <script src="https://feedback.example/widget.js" data-project="mijn-app" async></script>
 //
 // Instellingen komen uit data-attributen op die tag, of uit window.AudioFeedbackConfig
 // als die vóór het script staat. Met data-manual start er niets vanzelf en roept de
