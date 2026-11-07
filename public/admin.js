@@ -1,4 +1,5 @@
-// Beheerpagina: naar een tijd springen, opnames verwijderen, downloadmenu's sluiten en sites beheren.
+// Beheerpagina: naar een tijd springen, opnames verwijderen, downloadmenu's sluiten en sites beheren
+// (inclusief het venster om een site toe te voegen, dat op elke beheerpagina staat).
 
 // MediaRecorder-webm heeft geen duur in de header, en dan kan de browser niet
 // zoeken. Eén keer naar het einde springen laat hem de duur uitrekenen.
@@ -133,7 +134,7 @@ document.addEventListener('click', async (e) => {
   if (del) {
     const form = del.closest('form.site');
     if (!confirm(`${form.elements.origin.value} verwijderen? Die site kan daarna geen opnames meer insturen.`)) return;
-    if (await send(form, 'DELETE', `/api/sites/${form.dataset.site}`)) form.remove();
+    if (await send(form, 'DELETE', `/api/sites/${form.dataset.site}`)) (form.closest('.site-card') ?? form).remove();
     return;
   }
   const copy = e.target.closest('[data-copy]');
@@ -142,4 +143,27 @@ document.addEventListener('click', async (e) => {
     copy.textContent = 'Gekopieerd';
     setTimeout(() => (copy.textContent = 'Kopiëren'), 1500);
   }
+});
+
+// --- site toevoegen ---------------------------------------------------------
+
+// Elk element met data-add-site opent het venster, op welke beheerpagina ook.
+const addSite = document.getElementById('add-site');
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-add-site]')) {
+    addSite.showModal();
+    addSite.querySelector('[name=origin]').focus();
+    return;
+  }
+  // Het venster zelf is alleen te raken waar de achtergrond is: daar sluit het.
+  if (e.target === addSite || e.target.closest('[data-close-modal]')) addSite.close();
+});
+
+// Ook met Escape: de volgende keer begint het formulier weer leeg.
+addSite.addEventListener('close', () => {
+  const form = addSite.querySelector('form.site');
+  form.reset();
+  message(form, '', false);
+  updatePreview(form);
 });

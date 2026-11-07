@@ -203,7 +203,7 @@ const STYLE = `
   h1 { font-size: 20px; margin: 0 0 4px; }
   nav a { display: inline-block; padding: 6px 16px; border-radius: 999px; background: #fff; color: inherit; text-decoration: none; margin: 0 4px 4px 0; font-weight: 500; box-shadow: 0 1px 2px #0000001a; }
   nav a.active { background: #f8e800; color: #242f36; }
-  .rec, .site { background: #fff; border-radius: 16px; padding: 18px; margin-top: 16px; display: grid; gap: 10px; box-shadow: 1px 10px 40px #0000001f; }
+  .rec, .site-card { background: #fff; border-radius: 16px; padding: 18px; margin-top: 16px; display: grid; gap: 10px; box-shadow: 1px 10px 40px #0000001f; }
   .rec header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
   .spacer { flex: 1; }
   audio { width: 100%; }
@@ -233,8 +233,23 @@ const STYLE = `
   .empty { margin-top: 24px; color: #77818b; }
   .code { font-family: ui-monospace, monospace; color: #3c3c3c; }
   .note { font-size: 12px; color: #77818b; margin: 8px 0 0; }
-  .site.new { border: 2px dashed #d5dade; box-shadow: none; }
-  .site h2 { font-size: 15px; margin: 0; }
+  .site { display: grid; gap: 10px; }
+  .site-card { display: block; }
+  .site-card > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; list-style: none; color: inherit; font-size: inherit; }
+  .site-card > summary::-webkit-details-marker { display: none; }
+  .site-card > summary::before { content: ""; align-self: center; flex: none; border: 5px solid transparent; border-left-color: #77818b; border-right-width: 0; transition: transform .15s; }
+  .site-card[open] > summary::before { transform: rotate(90deg); }
+  .site-card > summary:hover h2 { text-decoration: underline; }
+  .site-card .site { margin-top: 14px; }
+  .site-card h2, .modal h2 { font-size: 15px; margin: 0; }
+  .title-row { display: flex; align-items: center; gap: 12px; }
+  .title-row h1 { flex: 1; margin: 0; }
+  .add { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: #f8e800; color: #242f36; font-size: 22px; line-height: 1; font-weight: 600; box-shadow: 0 1px 2px #0000001a; }
+  .add:hover { background: #242f36; color: #fff; }
+  .modal { width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 0; border: 0; border-radius: 16px; background: #fff; color: inherit; box-shadow: 1px 10px 40px #0000004d; }
+  .modal::backdrop { background: #242f3699; }
+  .modal-body { padding: 18px; display: grid; gap: 14px; }
+  .modal header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
   @media (max-width: 640px) { .fields { grid-template-columns: 1fr; } }
   label.field { display: grid; gap: 4px; font-weight: 500; }
@@ -273,6 +288,7 @@ function page(active: 'opnames' | 'sites', body: string): string {
 <main>
 ${body}
 </main>
+${renderAddSiteModal()}
 </body>
 </html>`;
 }
@@ -299,14 +315,14 @@ function exampleUrl(origin: string): string {
   return `${base}/pagina?tab=2&token=geheim#/route/12`;
 }
 
-function renderSite(site: Site | null, base: string): string {
+/** Het formulier van één site; zonder site is het leeg, om er een toe te voegen. */
+function siteForm(site: Site | null, base: string): string {
   const s = site ?? { id: '', origin: '', projects: [], stripQuery: true, stripHash: true, keepParams: [] };
   const query = !s.stripQuery ? 'all' : s.keepParams.length ? 'keep' : 'strip';
   const radio = (value: string, label: string) =>
     `<label><input type="radio" name="query" value="${value}"${query === value ? ' checked' : ''}> ${label}</label>`;
   const snippet = `<script src="${base}/widget.js" data-project="${s.projects[0] ?? 'mijn-app'}" defer></script>`;
-  return `<form class="site${site ? '' : ' new'}" data-site="${s.id}" novalidate>
-    <h2>${site ? escape(s.origin) : 'Site toevoegen'}</h2>
+  return `<form class="site" data-site="${s.id}" novalidate>
     <div class="fields">
       <label class="field">Website
         <input type="text" name="origin" value="${escape(s.origin)}" placeholder="https://mijn-app.example.nl" spellcheck="false" autocomplete="off">
@@ -342,11 +358,32 @@ function renderSite(site: Site | null, base: string): string {
   </form>`;
 }
 
+/** Een site op het overzicht: ingeklapt tot de website en de projectnamen, uitgeklapt het hele formulier. */
+function renderSite(site: Site, base: string): string {
+  const projects = site.projects.length ? site.projects.map(escape).join(', ') : 'elke projectnaam';
+  return `<details class="site-card">
+    <summary><h2>${escape(site.origin)}</h2><span class="muted">${projects}</span></summary>
+    ${siteForm(site, base)}
+  </details>`;
+}
+
+/**
+ * Het venster om een site toe te voegen. Staat op elke beheerpagina; elk element met
+ * data-add-site opent het (zie admin.js).
+ */
+function renderAddSiteModal(): string {
+  return `<dialog class="modal" id="add-site" aria-labelledby="add-site-title">
+  <div class="modal-body">
+    <header><h2 id="add-site-title">Site toevoegen</h2><button type="button" class="ghost" data-close-modal>Sluiten</button></header>
+    ${siteForm(null, '')}
+  </div>
+</dialog>`;
+}
+
 export function renderSites(sites: Site[], base: string): string {
-  return page('sites', `  <h1>Sites</h1>
+  return page('sites', `  <div class="title-row"><h1>Sites</h1><button type="button" class="add" data-add-site aria-label="Site toevoegen" title="Site toevoegen">+</button></div>
   <p class="note">Alleen deze websites mogen opnames insturen. Wat je hier instelt, geldt meteen bij de volgende opname: de app hoeft niet opnieuw te worden uitgerold.
     De widget en de server houden zich er allebei aan.</p>
   ${sites.map((s) => renderSite(s, base)).join('')}
-  ${sites.length ? '' : '<p class="empty">Nog geen sites: alleen de demopagina kan opnames insturen.</p>'}
-  ${renderSite(null, base)}`);
+  ${sites.length ? '' : '<p class="empty">Nog geen sites: alleen de demopagina kan opnames insturen.</p>'}`);
 }
