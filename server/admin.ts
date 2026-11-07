@@ -1,5 +1,5 @@
-// Beheerpagina: per opname de audio, de pagina's die erbij open stonden en wat de
-// app meldde (klik op een tijd om daarheen te springen) en de context. Alle velden komen van
+// Beheerpagina's: een overzicht met de recentste opnames (/admin), per opname de audio, de pagina's die erbij open stonden en wat de
+// app meldde (klik op een tijd om daarheen te springen) en de context (/admin/opnames), en de sites (/admin/sites). Alle velden komen van
 // clients en gaan dus door escape(); als link alleen http(s). Plus de events van een opname
 // als JSON- of Markdown-download, om te delen of verder te verwerken.
 
@@ -242,6 +242,11 @@ const STYLE = `
   .site-card > summary:hover h2 { text-decoration: underline; }
   .site-card .site { margin-top: 14px; }
   .site-card h2, .modal h2 { font-size: 15px; margin: 0; }
+  h2.section { font-size: 15px; margin: 24px 0 0; }
+  .recent-list { margin-top: 8px; display: grid; gap: 8px; }
+  .recent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; background: #fff; border-radius: 12px; padding: 10px 14px; color: inherit; text-decoration: none; box-shadow: 0 1px 2px #0000001a; }
+  .recent:hover { box-shadow: 1px 6px 24px #0000002e; }
+  .recent .page { flex: 1 1 100%; word-break: break-all; font-size: 12px; }
   .title-row { display: flex; align-items: center; gap: 12px; }
   .title-row h1 { flex: 1; margin: 0; }
   .add { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: #f8e800; color: #242f36; font-size: 22px; line-height: 1; font-weight: 600; box-shadow: 0 1px 2px #0000001a; }
@@ -271,7 +276,11 @@ const STYLE = `
   pre { background: #f6f8fa; border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 8px 0 0; font-size: 12px; }
 `;
 
-function page(active: 'opnames' | 'sites', body: string): string {
+const RECENT = 10;
+
+const PAGE_TITLE = { overzicht: 'Overzicht', opnames: 'Opnames', sites: 'Sites' };
+
+function page(active: keyof typeof PAGE_TITLE, body: string): string {
   const tab = (key: typeof active, href: string, label: string) =>
     `<a href="${href}" class="${key === active ? 'active' : ''}"${key === active ? ' aria-current="page"' : ''}>${label}</a>`;
   return `<!doctype html>
@@ -279,12 +288,12 @@ function page(active: 'opnames' | 'sites', body: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${active === 'sites' ? 'Sites' : 'Opnames'} · ingesproken feedback</title>
+<title>${PAGE_TITLE[active]} · ingesproken feedback</title>
 <style>${STYLE}</style>
 <script src="/admin.js" defer></script>
 </head>
 <body>
-<header class="bar"><div><strong>Ingesproken feedback</strong>${tab('opnames', '/admin', 'Opnames')}${tab('sites', '/admin/sites', 'Sites')}</div></header>
+<header class="bar"><div><strong>Ingesproken feedback</strong>${tab('overzicht', '/admin', 'Overzicht')}${tab('opnames', '/admin/opnames', 'Opnames')}${tab('sites', '/admin/sites', 'Sites')}</div></header>
 <main>
 ${body}
 </main>
@@ -293,20 +302,44 @@ ${renderAddSiteModal()}
 </html>`;
 }
 
-export function renderAdmin(all: StoredRecording[], project: string): string {
+/** Alle opnames, met de events, per project te filteren. */
+export function renderRecordings(all: StoredRecording[], project: string): string {
   const counts = new Map<string, number>();
   for (const r of all) counts.set(r.project, (counts.get(r.project) ?? 0) + 1);
   const shown = project ? all.filter((r) => r.project === project) : all;
   const filters = [
-    `<a href="/admin" class="${project ? '' : 'active'}">alle (${all.length})</a>`,
+    `<a href="/admin/opnames" class="${project ? '' : 'active'}">alle (${all.length})</a>`,
     ...[...counts].sort().map(([p, n]) =>
-      `<a href="/admin?project=${encodeURIComponent(p)}" class="${p === project ? 'active' : ''}">${escape(p)} (${n})</a>`),
+      `<a href="/admin/opnames?project=${encodeURIComponent(p)}" class="${p === project ? 'active' : ''}">${escape(p)} (${n})</a>`),
   ].join(' ');
 
   return page('opnames', `  <nav>${filters}</nav>
   <p class="note">Adressen, titels en context komen van de browser van wie insprak en zijn niet gecontroleerd. Klik alleen op links die je vertrouwt.
     Vraagt iemand om zijn opname, zoek dan op het kenmerk dat de widget na het versturen liet zien (Ctrl+F).</p>
   ${shown.length ? shown.map(renderRecording).join('') : '<p class="empty">Nog geen opnames.</p>'}`);
+}
+
+/** Een opname op het overzicht: één regel, zonder events. Klikken gaat naar die opname op /admin/opnames. */
+function renderRecent(r: StoredRecording): string {
+  return `<a class="recent" href="/admin/opnames#r-${r.id}">
+    <strong>${escape(r.project)}</strong>
+    <span class="muted">${dateFormat.format(new Date(r.startedAt))} · ${time(r.durationMs)} · kenmerk <span class="code">${r.id.slice(0, 8)}</span></span>
+    ${r.recovered ? '<span class="tag warn" title="Na een navigatie of crash teruggehaald; het laatste stukje kan ontbreken">teruggehaald</span>' : ''}
+    <span class="page muted">${escape(r.url)}${r.title ? ` · ${escape(r.title)}` : ''}</span>
+  </a>`;
+}
+
+/**
+ * Het beginscherm van beheer: een snelknop om een site toe te voegen en de recentste opnames,
+ * voor een snel beeld van wat er speelt. Voor events, audio en filteren is /admin/opnames.
+ * all is nieuwste eerst.
+ */
+export function renderAdmin(all: StoredRecording[]): string {
+  const recent = all.slice(0, RECENT);
+  return page('overzicht', `  <div class="title-row"><h1>Overzicht</h1><button type="button" class="primary" data-add-site>Site toevoegen</button></div>
+  <h2 class="section">Recente opnames</h2>
+  ${recent.length ? `<div class="recent-list">${recent.map(renderRecent).join('')}</div>` : '<p class="empty">Nog geen opnames.</p>'}
+  ${all.length ? `<p class="note"><a href="/admin/opnames">Alle opnames (${all.length}) →</a></p>` : ''}`);
 }
 
 /** Een adres om de instellingen op uit te proberen, met wat er vaak in staat. */

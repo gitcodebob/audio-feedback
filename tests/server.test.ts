@@ -477,6 +477,7 @@ describe('beheer', () => {
   test('lijst en audio vragen om het wachtwoord', async () => {
     assert.equal((await fetch(`${base}/api/recordings`)).status, 401);
     assert.equal((await fetch(`${base}/admin`)).status, 401);
+    assert.equal((await fetch(`${base}/admin/opnames`)).status, 401);
     const wrong = { authorization: `Basic ${Buffer.from('x:fout').toString('base64')}` };
     assert.equal((await fetch(`${base}/api/recordings`, { headers: wrong })).status, 401);
   });
@@ -535,7 +536,7 @@ describe('beheer', () => {
     ]);
     for (const key of ['audioFile', 'sizeBytes', 'origin', 'timeline']) assert.ok(!(key in doc), key);
 
-    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const html = await (await fetch(`${base}/admin/opnames`, { headers: AUTH })).text();
     assert.ok(html.includes(`href="/api/recordings/${m.id}/events" download="meterkast-${m.id.slice(0, 8)}.json"`));
   });
 
@@ -624,7 +625,7 @@ describe('beheer', () => {
     assert.equal(markdown.headers.get('content-disposition'), `attachment; filename="${name}.md"`);
 
     // En in de beheerpagina, waar de download-attributen de naam bepalen.
-    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const html = await (await fetch(`${base}/admin/opnames`, { headers: AUTH })).text();
     for (const [path, ext] of [['audio', 'webm'], ['audio.mp3', 'mp3'], ['events', 'json'], ['events.md', 'md']]) {
       assert.ok(html.includes(`href="/api/recordings/${m.id}/${path}" download="${name}.${ext}"`), `${path} → ${name}.${ext}`);
     }
@@ -640,7 +641,7 @@ describe('beheer', () => {
   test('in de beheerpagina is elke download één knop: klikken geeft het gewone formaat, het menu de rest', async () => {
     const m = meta({ project: 'meterkast' });
     await post(m);
-    const page = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const page = await (await fetch(`${base}/admin/opnames`, { headers: AUTH })).text();
     const html = page.split(`<article class="rec" id="r-${m.id}">`)[1]!.split('</article>')[0]!;
     const name = `meterkast-${m.id.slice(0, 8)}`;
     // Per knop: eerst de hoofdlink, daarna dezelfde formaten in het uitklapmenu.
@@ -655,6 +656,43 @@ describe('beheer', () => {
     assert.equal(html.split(`href="${at}/audio.mp3"`).length - 1, 2);
   });
 
+  test('het overzicht toont de tien recentste opnames, zonder events, en linkt naar de opnames', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const m = meta({ project: `overzicht-${i}`, title: `Titel ${i}`, timeline: [{ at: 0, type: 'start', url: `${ORIGIN}/x` }, { at: 500, type: 'error', label: `uniek-event-${i}` }] });
+      assert.equal((await post(m)).status, 201);
+      ids.push(m.id);
+      await new Promise((r) => setTimeout(r, 5)); // receivedAt bepaalt de volgorde
+    }
+    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const shown = [...html.matchAll(/href="\/admin\/opnames#r-([0-9a-f-]{36})"/g)].map((x) => x[1]);
+    assert.deepEqual(shown.slice(0, 10), ids.slice(2).reverse());
+    assert.ok(!shown.includes(ids[0]!) && !shown.includes(ids[1]!));
+    // Geen events, audio of verwijderknop: dat is voor /admin/opnames.
+    assert.ok(!html.includes('uniek-event-') && !html.includes('<audio') && !html.includes('data-delete="'));
+    assert.ok(html.includes('data-add-site') && html.includes('id="add-site"'));
+    assert.ok(html.includes('href="/admin/opnames"') && html.includes('href="/admin/sites"'));
+    assert.ok(html.includes('Titel 11'));
+    assert.ok(html.includes(`kenmerk <span class="code">${ids[11]!.slice(0, 8)}</span>`));
+  });
+
+  test('het overzicht escapet wat clients insturen', async () => {
+    const m = meta({ project: 'xss-overzicht', title: '<script>alert(2)</script>', url: `${ORIGIN}/"><img src=x onerror=alert(2)>` });
+    assert.equal((await post(m)).status, 201);
+    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    assert.ok(!html.includes('<script>alert(2)</script>') && !html.includes('<img src=x'));
+    assert.ok(html.includes(m.id));
+  });
+
+  test('de opnamepagina staat op /admin/opnames, met filters daarheen', async () => {
+    const m = meta({ project: 'filter-opnames' });
+    assert.equal((await post(m)).status, 201);
+    const html = await (await fetch(`${base}/admin/opnames?project=filter-opnames`, { headers: AUTH })).text();
+    assert.ok(html.includes(`<article class="rec" id="r-${m.id}">`));
+    assert.ok(html.includes('href="/admin/opnames?project=filter-opnames"'));
+    assert.ok(!html.includes('href="/admin?project='));
+  });
+
   test('de beheerpagina escapet wat clients insturen', async () => {
     const m = meta({
       title: '<script>alert(1)</script>',
@@ -662,7 +700,7 @@ describe('beheer', () => {
       timeline: [{ at: -3_000, type: 'level', label: '<b>vet</b>', data: { k: '<i>schuin</i>' } }],
     });
     await post(m);
-    const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+    const html = await (await fetch(`${base}/admin/opnames`, { headers: AUTH })).text();
     assert.ok(!html.includes('<script>alert(1)</script>'));
     assert.ok(!html.includes('<img src=x'));
     assert.ok(!html.includes('<b>vet</b>') && !html.includes('<i>schuin</i>'));
@@ -714,7 +752,7 @@ describe('mp3-download', () => {
       assert.ok(args.includes('libmp3lame'));
       assert.deepEqual(args.slice(args.indexOf('-f')), ['-f', 'mp3', 'pipe:1', '']);
 
-      const html = await (await fetch(`${base}/admin`, { headers: AUTH })).text();
+      const html = await (await fetch(`${base}/admin/opnames`, { headers: AUTH })).text();
       assert.ok(html.includes(`href="/api/recordings/${m.id}/audio.mp3" download="meterkast-${m.id.slice(0, 8)}.mp3"`));
     });
   });

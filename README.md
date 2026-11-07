@@ -30,7 +30,7 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
    ```
    - Roep het aan op het moment dat het scherm of de toestand wisselt, niet per frame of
      per toetsaanslag.
-   - `type` is een vaste, korte naam om op te filteren. `label` is wat een mens in `/admin`
+   - `type` is een vaste, korte naam om op te filteren. `label` is wat een mens in `/admin/opnames`
      leest. In `data` horen een paar losse velden.
    - Geen persoonsgegevens, tokens of ingevoerde tekst. Alles wat je meldt, gaat met de opname mee.
    - Schrijf `?.`: zolang de widget er niet is (nog aan het laden, tests, localhost), doet de
@@ -38,7 +38,7 @@ Meer is er niet nodig om het in een app te zetten. De widget heeft geen afhankel
 4. **Heeft je app een login, roep dan bij uitloggen `AudioFeedback.clear()` aan**, zodat de
    volgende gebruiker geen opname van een ander aangeboden krijgt.
 5. **Controleer het resultaat.** Klik rond, neem iets op, verstuur het, en kijk in
-   [`/admin`](#server) of de pagina's en events in de tijdlijn staan.
+   [`/admin/opnames`](#server) of de pagina's en events in de tijdlijn staan.
 
 Er gaat niets naar de server tot de gebruiker op **Versturen** drukt. Events van de halve minuut
 vóór **Opnemen** gaan ook mee. Meer opties staan bij [Integreren](#integreren) en
@@ -59,14 +59,14 @@ vóór **Opnemen** gaan ook mee. Meer opties staan bij [Integreren](#integreren)
 3. **Terugluisteren**: een speler, en de lijst met pagina's die meegaan, zodat de gebruiker ziet
    wat er verstuurd wordt. Daarna **Versturen** of **Weggooien**.
 4. **Bedankt**, met een kenmerk (de eerste 8 tekens van het id) en de bewaartermijn. Met dat
-   kenmerk is de opname in `/admin` terug te vinden als iemand hem wil laten inzien of
+   kenmerk is de opname in `/admin/opnames` terug te vinden als iemand hem wil laten inzien of
    verwijderen. Na 30 seconden is het kaartje weer klaar voor een nieuwe opname.
 
 ### Wat er meegaat
 
 | Veld | Inhoud |
 |---|---|
-| audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut. In `/admin` ook als mp3 te downloaden, voor tools die WebM weigeren |
+| audio | Opus in WebM (Chrome, Firefox) of AAC in MP4 (Safari), 32 kbit/s: ~240 kB per minuut. In `/admin/opnames` ook als mp3 te downloaden, voor tools die WebM weigeren |
 | `url`, `title` | de pagina waar de opname begon. Standaard alleen het pad, zonder query en hash: daarin staan vaak tokens, zoektermen of ids. Per site in te stellen in [`/admin/sites`](#sites-beheren) |
 | `timeline` | events met hun positie in de opname. Dat zijn de paginawissels (`pushState`, gewone navigatie, en de hash als die meegaat), pauze en hervat, en wat de app met [`AudioFeedback.event()`](#events-uit-de-app) meldt. Ook de events van de halve minuut vóór **Opnemen** gaan mee, met een negatieve tijd. In de beheerpagina klik je op een tijd en hoor je wat er op dat moment gezegd werd |
 | `context` | vrije sleutel-waardeparen van de app zelf, bijvoorbeeld versie of omgeving |
@@ -232,7 +232,8 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 |---|---|
 | `GET /widget.js` | het script |
 | `POST /api/recordings` | upload: multipart met `meta` (JSON) en `audio`. Controleert de origin en het project dat daarbij hoort, het formaat (aan de eerste bytes, niet aan wat de client zegt), de grootte, het aantal per IP en in totaal, en de ruimte op schijf. Dezelfde id twee keer is geen dubbele |
-| `GET /admin` | beheerpagina: luisteren, per pagina of event naar de tijd springen, filteren per project, verwijderen, en audio en events downloaden. Elk is één knop: klikken geeft mp3 resp. JSON, het carret klapt de andere formaten uit (audio zoals opgenomen, events als Markdown) |
+| `GET /admin` | overzicht: de snelknop om een site toe te voegen en de 10 recentste opnames, zonder events; een opname opent op `/admin/opnames` |
+| `GET /admin/opnames` | alle opnames: luisteren, per pagina of event naar de tijd springen, filteren per project, verwijderen, en audio en events downloaden. Elk is één knop: klikken geeft mp3 resp. JSON, het carret klapt de andere formaten uit (audio zoals opgenomen, events als Markdown) |
 | `GET /admin/sites` | sites beheren: toevoegen, wijzigen, verwijderen, en per site query en hash instellen |
 | `GET`/`POST /api/sites`, `PUT`/`DELETE /api/sites/:id` | hetzelfde als JSON. Alleen `application/json`, en alleen vanaf de eigen origin |
 | `GET /api/sites/config` | de URL-instellingen van de site die het vraagt (`Origin`). De widget vraagt dit bij **Opnemen** |
@@ -248,7 +249,7 @@ Node zonder runtime-dependencies (`node:http`, TypeScript via de ingebouwde type
 
 Wat je van één opname downloadt heet hetzelfde, op de extensie na: `<project>-<kenmerk>.webm` (of `.ogg`, `.m4a`), `.mp3`, `.json` en `.md`. Bij een verzameling op schaal in één map staan ze zo naast elkaar en vind je bij elkaar wat bij elkaar hoort. Het kenmerk is de eerste 8 tekens van het id, hetzelfde als dat de widget na het versturen toont.
 
-`/admin`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic
+`/admin`, `/admin/opnames`, `/admin/sites`, `/api/sites` en de `GET`/`DELETE` op `/api/recordings` vragen Basic
 auth: een willekeurige naam, en `ADMIN_PASSWORD` als wachtwoord.
 
 ### Sites beheren
