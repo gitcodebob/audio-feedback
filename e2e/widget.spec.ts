@@ -235,11 +235,52 @@ test('events van de app gaan mee, met de halve minuut vóór Opnemen', async ({ 
   expect(warnings.some((w) => w.includes('"navigate" is van de widget zelf'))).toBe(true);
 });
 
+test('een site toevoegen kan in een venster, en het venster staat op elke beheerpagina', async ({ browser }) => {
+  const admin = await browser.newContext({ httpCredentials: { username: 'beheer', password: 'e2e' } });
+  const adminPage = await admin.newPage();
+  const modal = adminPage.getByRole('dialog', { name: 'Site toevoegen' });
+
+  // Op de opnamepagina is het venster er ook; alleen is er geen knop die het opent.
+  await adminPage.goto(`${SERVER}/admin`);
+  await expect(modal).toBeHidden();
+  await adminPage.evaluate(() => (document.getElementById('add-site') as HTMLDialogElement).showModal());
+  await expect(modal).toBeVisible();
+  await adminPage.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
+
+  await adminPage.goto(`${SERVER}/admin/sites`);
+  await expect(adminPage.locator('form.site:visible')).toHaveCount(0);
+  await adminPage.getByRole('button', { name: 'Site toevoegen' }).click();
+  await expect(modal).toBeVisible();
+  await modal.getByLabel('Website').fill('https://modal.example.nl');
+  await modal.getByRole('button', { name: 'Sluiten' }).click();
+  await expect(modal).toBeHidden();
+
+  // Na sluiten begint het formulier weer leeg.
+  await adminPage.getByRole('button', { name: 'Site toevoegen' }).click();
+  await expect(modal.getByLabel('Website')).toHaveValue('');
+  await modal.getByLabel('Website').fill('https://modal.example.nl');
+  await modal.getByRole('button', { name: 'Toevoegen' }).click();
+  await adminPage.waitForLoadState('load');
+  const card = adminPage.locator('details.site-card', { hasText: 'https://modal.example.nl' });
+  await expect(card).toBeVisible();
+  await expect(card.locator('form.site')).toBeHidden();
+
+  const sites = (await (await adminPage.request.get(`${SERVER}/api/sites`)).json()) as { sites: { id: string; origin: string }[] };
+  await adminPage.request.delete(`${SERVER}/api/sites/${sites.sites.find((x) => x.origin === 'https://modal.example.nl')!.id}`);
+  await admin.close();
+});
+
 test('in /admin/sites ingesteld, geldt meteen bij de volgende opname', async ({ browser, page }) => {
   const admin = await browser.newContext({ httpCredentials: { username: 'beheer', password: 'e2e' } });
   const adminPage = await admin.newPage();
   await adminPage.goto(`${SERVER}/admin/sites`);
-  const form = adminPage.locator('form.site', { has: adminPage.getByRole('heading', { name: `http://localhost:${HOST_PORT}` }) });
+  // Sites staan ingeklapt tot je erop klikt.
+  const card = adminPage.locator('details.site-card', { has: adminPage.getByRole('heading', { name: `http://localhost:${HOST_PORT}` }) });
+  const form = card.locator('form.site');
+  await expect(form).toBeHidden();
+  await card.locator(':scope > summary').click();
+  await expect(form).toBeVisible();
 
   // Het voorbeeld laat zien wat er bewaard blijft, al tijdens het instellen.
   await form.getByLabel('Voorbeeldadres').fill(`http://localhost:${HOST_PORT}/x?tab=2&token=geheim#/route`);
