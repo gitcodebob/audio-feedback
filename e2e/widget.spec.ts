@@ -241,9 +241,16 @@ test('een site toevoegen kan in een venster, en het venster staat op elke beheer
   const modal = adminPage.getByRole('dialog', { name: 'Site toevoegen' });
 
   // Op de opnamepagina is het venster er ook; alleen is er geen knop die het opent.
-  await adminPage.goto(`${SERVER}/admin`);
+  await adminPage.goto(`${SERVER}/admin/opnames`);
   await expect(modal).toBeHidden();
   await adminPage.evaluate(() => (document.getElementById('add-site') as HTMLDialogElement).showModal());
+  await expect(modal).toBeVisible();
+  await adminPage.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
+
+  // Op het overzicht opent de snelknop het.
+  await adminPage.goto(`${SERVER}/admin`);
+  await adminPage.getByRole('button', { name: 'Site toevoegen' }).click();
   await expect(modal).toBeVisible();
   await adminPage.keyboard.press('Escape');
   await expect(modal).toBeHidden();

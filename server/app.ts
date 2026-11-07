@@ -7,7 +7,8 @@
 //   GET  /api/recordings/:id/events  events als JSON    │
 //   GET  /api/recordings/:id/events.md events als Markdown │
 //   DELETE /api/recordings/:id       verwijderen        │
-//   GET  /admin                      luisterpagina      │
+//   GET  /admin                      overzicht          │
+//   GET  /admin/opnames              luisterpagina      │
 //   GET  /admin/sites                sitebeheer         │
 //   GET  /api/sites                  sites als JSON     │
 //   POST /api/sites                  site toevoegen     │
@@ -26,7 +27,7 @@ import { Readable, Transform } from 'node:stream';
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { cleanUrl, STRICT_URL_OPTIONS, type UrlOptions } from '../widget/src/clean-url.ts';
-import { audioFileName, eventsDocument, eventsFileName, eventsMarkdown, eventsMarkdownFileName, mp3FileName, renderAdmin, renderSites } from './admin.ts';
+import { audioFileName, eventsDocument, eventsFileName, eventsMarkdown, eventsMarkdownFileName, mp3FileName, renderAdmin, renderRecordings, renderSites } from './admin.ts';
 import { Mp3Error, sendMp3 } from './mp3.ts';
 import { parseSiteInput, SiteConflictError, type SiteStore } from './sites.ts';
 import { Storage, type StoredRecording } from './storage.ts';
@@ -434,9 +435,13 @@ export function createApp(config: AppConfig) {
         }
         if (path === '/admin') {
           if (!requireAdmin(req, res)) return;
+          return sendAdminHtml(res, renderAdmin(await storage.list()));
+        }
+        if (path === '/admin/opnames') {
+          if (!requireAdmin(req, res)) return;
           const records = await storage.list();
           const project = url.searchParams.get('project') ?? '';
-          return sendAdminHtml(res, renderAdmin(records, project));
+          return sendAdminHtml(res, renderRecordings(records, project));
         }
         if (path === '/admin/sites') {
           if (!requireAdmin(req, res)) return;
